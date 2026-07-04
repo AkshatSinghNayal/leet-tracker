@@ -42,8 +42,9 @@ model Question {
   leetcodeId   Int
   url          String
   title        String
-  difficulty   String   // "Easy" | "Medium" | "Hard"
+  difficulty   String   // "Easy" | "Medium" | "Hard"  (also called "level")
   difficultyOrder Int   // 0=Easy, 1=Medium, 2=Hard (for sorting)
+  primaryTopic String   @default("Uncategorized")  // e.g. "Dynamic Programming", "Arrays"
   solved       Boolean  @default(false)
   solvedAt     DateTime?
   createdAt    DateTime @default(now())
@@ -52,6 +53,7 @@ model Question {
 
   @@unique([sheetId, leetcodeId])
   @@index([sheetId, difficulty])
+  @@index([sheetId, primaryTopic])
   @@index([sheetId, solved])
   @@index([ownerId])
 }

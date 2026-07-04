@@ -36,6 +36,7 @@ export interface Question {
   url: string;
   title: string;
   difficulty: "Easy" | "Medium" | "Hard";
+  primary_topic: string;
   solved: boolean;
   solved_at: string | null;
 }
@@ -47,15 +48,17 @@ export interface QuestionsResponse {
   page_size: number;
   total_pages: number;
   stats: SheetStats;
+  primary_topics: string[];
 }
 
-export type SortBy = "id" | "title" | "difficulty";
+export type SortBy = "id" | "title" | "difficulty" | "primary_topic";
 export type SortDir = "asc" | "desc";
 export type SolvedFilter = "all" | "solved" | "unsolved";
 
 export interface QuestionQuery {
   search?: string;
   difficulty?: string;       // comma-separated
+  primary_topic?: string;    // comma-separated
   solved?: SolvedFilter;
   sort_by: SortBy;
   sort_dir: SortDir;
@@ -66,5 +69,6 @@ export interface QuestionQuery {
 export interface Filters {
   search: string;
   difficulty: Set<"Easy" | "Medium" | "Hard">;
+  primaryTopic: Set<string>;
   solved: SolvedFilter;
 }

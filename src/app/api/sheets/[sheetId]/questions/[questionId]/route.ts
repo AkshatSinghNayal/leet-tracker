@@ -40,6 +40,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sh
       url: question.url,
       title: question.title,
       difficulty: question.difficulty,
+      primary_topic: question.primaryTopic,
       solved: question.solved,
       solved_at: question.solvedAt,
     },

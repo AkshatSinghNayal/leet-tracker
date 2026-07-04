@@ -69,6 +69,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
         title: q.title,
         difficulty: q.difficulty,
         difficultyOrder: DIFFICULTY_ORDER[q.difficulty],
+        primaryTopic: q.primaryTopic,
         solved: solvedSet.has(q.leetcodeId),
         solvedAt: solvedSet.has(q.leetcodeId) ? new Date() : null,
       })),

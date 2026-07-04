@@ -9,8 +9,9 @@ const DIFFICULTY_ORDER: Record<string, number> = { Easy: 0, Medium: 1, Hard: 2 }
 interface QueryParams {
   search?: string;
   difficulty?: string[];
+  primaryTopic?: string[];
   solved?: "all" | "solved" | "unsolved";
-  sort_by: "id" | "title" | "difficulty";
+  sort_by: "id" | "title" | "difficulty" | "primary_topic";
   sort_dir: "asc" | "desc";
   page: number;
   page_size: number;
@@ -23,19 +24,23 @@ function parseQuery(url: URL): QueryParams {
   const difficulty = diff
     ? diff.split(",").map((d) => d.trim()).filter(Boolean)
     : undefined;
+  const topicRaw = sp.get("primary_topic");
+  const primaryTopic = topicRaw
+    ? topicRaw.split(",").map((t) => t.trim()).filter(Boolean)
+    : undefined;
   const solvedRaw = sp.get("solved") || "all";
   const solved: QueryParams["solved"] =
     solvedRaw === "solved" || solvedRaw === "unsolved" ? solvedRaw : "all";
   const sortByRaw = sp.get("sort_by") || "id";
   const sort_by: QueryParams["sort_by"] =
-    sortByRaw === "title" || sortByRaw === "difficulty" ? sortByRaw : "id";
+    sortByRaw === "title" || sortByRaw === "difficulty" || sortByRaw === "primary_topic" ? sortByRaw : "id";
   const sortDirRaw = sp.get("sort_dir") || "asc";
   const sort_dir: QueryParams["sort_dir"] = sortDirRaw === "desc" ? "desc" : "asc";
   const page = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
   const pageSizeRaw = parseInt(sp.get("page_size") || "50", 10) || 50;
   const page_size = [25, 50, 100].includes(pageSizeRaw) ? pageSizeRaw : 50;
 
-  return { search, difficulty, solved, sort_by, sort_dir, page, page_size };
+  return { search, difficulty, primaryTopic, solved, sort_by, sort_dir, page, page_size };
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ sheetId: string }> }) {
@@ -55,6 +60,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
   if (q.difficulty && q.difficulty.length > 0) {
     where.difficulty = { in: q.difficulty };
   }
+  if (q.primaryTopic && q.primaryTopic.length > 0) {
+    where.primaryTopic = { in: q.primaryTopic };
+  }
   if (q.solved === "solved") where.solved = true;
   else if (q.solved === "unsolved") where.solved = false;
 
@@ -63,6 +71,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
   const orderBy: Record<string, "asc" | "desc"> = {};
   if (sortField === "difficulty") {
     orderBy.difficultyOrder = q.sort_dir;
+  } else if (sortField === "primary_topic") {
+    orderBy.primaryTopic = q.sort_dir;
   } else {
     orderBy[sortField === "id" ? "leetcodeId" : sortField] = q.sort_dir;
   }
@@ -79,6 +89,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
       url: true,
       title: true,
       difficulty: true,
+      primaryTopic: true,
       solved: true,
       solvedAt: true,
     },
@@ -105,6 +116,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
   for (const d of byDiff) diffMap[d.difficulty].total = d._count._all;
   for (const d of byDiffSolved) diffMap[d.difficulty].solved = d._count._all;
 
+  // Distinct primary topics in this sheet (for the filter dropdown)
+  const topics = await db.question.findMany({
+    where: { sheetId, ownerId: user.id },
+    select: { primaryTopic: true },
+    distinct: ["primaryTopic"],
+  });
+  const topicList = topics.map((t) => t.primaryTopic).sort();
+
   return Response.json({
     questions: questions.map((q) => ({
       id: q.id,
@@ -112,6 +131,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
       url: q.url,
       title: q.title,
       difficulty: q.difficulty,
+      primary_topic: q.primaryTopic,
       solved: q.solved,
       solved_at: q.solvedAt,
     })),
@@ -120,6 +140,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
     page_size: q.page_size,
     total_pages: Math.max(1, Math.ceil(total / q.page_size)),
     stats: { total: totalCount, solved: solvedCount, by_difficulty: diffMap },
+    primary_topics: topicList,
   });
 }
 
@@ -136,6 +157,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
     url?: string;
     title?: string;
     difficulty?: string;
+    primary_topic?: string;
   };
   try {
     body = await req.json();
@@ -160,6 +182,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
   });
   if (existing) return Response.json({ detail: "Question already exists in this sheet" }, { status: 409 });
 
+  const primaryTopic = (body.primary_topic ?? "").trim() || "Uncategorized";
+
   const question = await db.question.create({
     data: {
       sheetId,
@@ -169,6 +193,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
       title,
       difficulty,
       difficultyOrder: DIFFICULTY_ORDER[difficulty],
+      primaryTopic,
     },
   });
 
@@ -179,6 +204,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
       url: question.url,
       title: question.title,
       difficulty: question.difficulty,
+      primary_topic: question.primaryTopic,
       solved: question.solved,
       solved_at: question.solvedAt,
     },
