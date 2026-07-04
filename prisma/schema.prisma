@@ -1,12 +1,19 @@
-// LeetCode Tracker — Prisma schema
-// Multi-user, per-user sheets, denormalized questions per sheet.
+// PostgreSQL variant of the Prisma schema — for Vercel / Neon / Supabase / Render Postgres.
+//
+// To use this:
+//   1. Copy this file over prisma/schema.prisma:
+//        cp prisma/schema.postgres.prisma prisma/schema.prisma
+//   2. Set DATABASE_URL to your Postgres connection string in .env or your host's dashboard.
+//   3. Run `bun run db:push` to create tables.
+//
+// All model definitions are identical to the SQLite variant — only the datasource provider changes.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -37,20 +44,20 @@ model Sheet {
 }
 
 model Question {
-  id           String   @id @default(cuid())
-  sheetId      String
-  ownerId      String
-  leetcodeId   Int
-  url          String
-  title        String
-  difficulty   String   // "Easy" | "Medium" | "Hard"  (also called "level")
-  difficultyOrder Int   // 0=Easy, 1=Medium, 2=Hard (for sorting)
-  primaryTopic String   @default("Uncategorized")  // e.g. "Dynamic Programming", "Arrays"
-  solved       Boolean  @default(false)
-  solvedAt     DateTime?
-  createdAt    DateTime @default(now())
+  id              String   @id @default(cuid())
+  sheetId         String
+  ownerId         String
+  leetcodeId      Int
+  url             String
+  title           String
+  difficulty      String
+  difficultyOrder Int
+  primaryTopic    String   @default("Uncategorized")
+  solved          Boolean  @default(false)
+  solvedAt        DateTime?
+  createdAt       DateTime @default(now())
 
-  sheet        Sheet    @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  sheet           Sheet    @relation(fields: [sheetId], references: [id], onDelete: Cascade)
 
   @@unique([sheetId, leetcodeId])
   @@index([sheetId, difficulty])
@@ -60,17 +67,13 @@ model Question {
   @@index([ownerId, leetcodeId])
 }
 
-// Global solved state per (user, leetcodeId). When a user marks a question as
-// solved in any sheet, this is upserted. All Question rows for the same
-// (ownerId, leetcodeId) are kept in sync — so solving in one sheet marks it
-// solved in every sheet that contains that leetcode_id.
 model SolvedQuestion {
-  id          String   @id @default(cuid())
-  ownerId     String
-  leetcodeId  Int
-  solvedAt    DateTime @default(now())
+  id         String   @id @default(cuid())
+  ownerId    String
+  leetcodeId Int
+  solvedAt   DateTime @default(now())
 
-  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@unique([ownerId, leetcodeId])
   @@index([ownerId])
