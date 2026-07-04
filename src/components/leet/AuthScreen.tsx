@@ -55,7 +55,7 @@ export function AuthScreen() {
           <span className="font-medium tracking-tight">LeetCode Tracker</span>
         </div>
         <a
-          href="https://github.com"
+          href="https://github.com/AkshatSinghNayal?tab=repositories"
           target="_blank"
           rel="noreferrer"
           className="text-muted-foreground hover:text-foreground transition-colors"
