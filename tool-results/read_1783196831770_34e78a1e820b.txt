@@ -1,0 +1,1356 @@
+     1→# LeetCode Tracker — Full-Stack Build Prompt
+     2→
+     3→> **Stack:** Python · FastAPI · React (Vite + TypeScript) · MongoDB Atlas (cloud) · JWT auth
+     4→> **Goal:** Rebuild the existing client-side LeetCode Tracker as a multi-user full-stack app. Users register/login, own their own sheets, upload CSVs, and track solved progress per sheet — all persisted server-side.
+     5→> **Tone:** Production-ready, deployable to Render/Railway (backend) + Vercel (frontend). Not a toy.
+     6→
+     7→---
+     8→
+     9→## 0. Project Context
+    10→
+    11→The current app is a single-user, 100% client-side Next.js prototype. Data lives in `localStorage`. You are rebuilding it as a **proper multi-user SaaS-style app** with:
+    12→
+    13→- A **FastAPI** backend exposing a REST API
+    14→- A **MongoDB Atlas** cloud database (free M0 tier is fine)
+    15→- **JWT**-based authentication (access + refresh tokens)
+    16→- A **React + Vite + TypeScript** frontend (single-page app, dark-themed, GitHub × Linear × Vercel aesthetic)
+    17→- Per-user ownership: every sheet belongs to exactly one user; users cannot see or mutate each other's data
+    18→
+    19→### Functional parity with the existing prototype
+    20→
+    21→The new app MUST preserve every feature of the current prototype:
+    22→
+    23→1. CSV upload with header validation (`ID, URL, Title, Difficulty, Acceptance %, Frequency %`)
+    24→2. Multi-sheet support — each upload becomes a named sheet (e.g. `DP`, `Arrays`, `Graphs`)
+    25→3. Per-sheet question list + per-sheet solved state
+    26→4. Filter sidebar: title search, multi-select difficulty, dual-handle frequency range + preset chips (100/75/50/25%), dual-handle acceptance range, solved toggle
+    27→5. Sortable, paginated table (25/50/100 rows per page)
+    28→6. Active-filters chip row + "Clear all"
+    29→7. Stats bar (overall + per-difficulty solved %)
+    30→8. Dark/light theme toggle (default dark)
+    31→9. Empty state, loading states, error toasts
+    32→10. Replace-existing-sheet flow (preserves solved IDs that still exist in the new CSV)
+    33→
+    34→### New functionality the full-stack version adds
+    35→
+    36→1. **User accounts** — register, login, logout
+    37→2. **Server-side persistence** — sheets and solved state live in MongoDB, not localStorage
+    38→3. **Multi-device sync** — same user logs in from anywhere, sees their data
+    39→4. **Protected routes** — frontend auth gates; backend 401s unauthenticated requests
+    40→5. **Token refresh** — short-lived access token (15 min) + long-lived refresh token (7 days), httpOnly cookie for refresh
+    41→6. **Password security** — bcrypt hashing, never store plaintext
+    42→7. **Rate limiting** — login/register endpoints limited to prevent brute force
+    43→8. **CSV size limit** — enforce max ~5 MB per upload server-side
+    44→
+    45→---
+    46→
+    47→## 1. Repository Structure
+    48→
+    49→Use a monorepo-style layout. Two independent deployable apps.
+    50→
+    51→```
+    52→leetcode-tracker/
+    53→├── backend/                         # FastAPI service
+    54→│   ├── app/
+    55→│   │   ├── __init__.py
+    56→│   │   ├── main.py                  # FastAPI app factory + route registration
+    57→│   │   ├── config.py                # pydantic-settings: env vars
+    58→│   │   ├── database.py              # MongoDB async client (motor)
+    59→│   │   ├── deps.py                  # shared deps: get_db, get_current_user
+    60→│   │   ├── security.py              # JWT encode/decode, password hashing
+    61→│   │   ├── models.py                # pydantic models (request/response schemas)
+    62→│   │   ├── routes/
+    63→│   │   │   ├── __init__.py
+    64→│   │   │   ├── auth.py              # /api/auth/register, /login, /refresh, /me, /logout
+    65→│   │   │   ├── sheets.py            # /api/sheets CRUD + question listing
+    66→│   │   │   ├── questions.py         # /api/sheets/{id}/questions filter/sort/paginate
+    67→│   │   │   └── upload.py            # /api/sheets/{id}/upload (CSV replace) + /api/sheets (create)
+    68→│   │   ├── services/
+    69→│   │   │   ├── __init__.py
+    70→│   │   │   ├── csv_parser.py        # streaming CSV parse + validation
+    71→│   │   │   └── sheet_service.py     # business logic for sheet CRUD
+    72→│   │   └── middleware/
+    73→│   │       ├── __init__.py
+    74→│   │       └── rate_limit.py        # slowapi rate limiter
+    75→│   ├── tests/
+    76→│   │   ├── conftest.py
+    77→│   │   ├── test_auth.py
+    78→│   │   ├── test_sheets.py
+    79→│   │   └── test_upload.py
+    80→│   ├── .env.example
+    81→│   ├── .gitignore
+    82→│   ├── requirements.txt
+    83→│   ├── README.md
+    84→│   └── Dockerfile
+    85→├── frontend/                        # React + Vite SPA
+    86→│   ├── src/
+    87→│   │   ├── main.tsx
+    88→│   │   ├── App.tsx                  # Router + auth gate
+    89→│   │   ├── api/
+    90→│   │   │   ├── client.ts            # axios instance with interceptor (refresh on 401)
+    91→│   │   │   ├── auth.ts              # register/login/refresh/me
+    92→│   │   │   └── sheets.ts            # sheets + questions API
+    93→│   │   ├── context/
+    94→│   │   │   ├── AuthContext.tsx      # current user, login/logout
+    95→│   │   │   └── ThemeContext.tsx     # dark/light
+    96→│   │   ├── hooks/
+    97→│   │   │   ├── useAuth.ts
+    98→│   │   │   ├── useSheets.ts
+    99→│   │   │   └── useDebounce.ts
+   100→│   │   ├── components/
+   101→│   │   │   ├── ui/                  # button, input, dialog, slider, etc. (shadcn-style)
+   102→│   │   │   ├── Header.tsx
+   103→│   │   │   ├── Footer.tsx
+   104→│   │   │   ├── ThemeToggle.tsx
+   105→│   │   │   ├── SheetTabs.tsx
+   106→│   │   │   ├── UploadDialog.tsx
+   107→│   │   │   ├── FiltersSidebar.tsx
+   108→│   │   │   ├── ActiveFilters.tsx
+   109→│   │   │   ├── QuestionTable.tsx
+   110→│   │   │   ├── StatsBar.tsx
+   111→│   │   │   ├── DifficultyBadge.tsx
+   112→│   │   │   ├── EmptyState.tsx
+   113→│   │   │   └── ProtectedRoute.tsx
+   114→│   │   ├── pages/
+   115→│   │   │   ├── LoginPage.tsx
+   116→│   │   │   ├── RegisterPage.tsx
+   117→│   │   │   └── DashboardPage.tsx
+   118→│   │   ├── lib/
+   119→│   │   │   ├── types.ts             # Question, Sheet, Filters, SortState
+   120→│   │   │   ├── csv.ts               # client-side parse for preview
+   121→│   │   │   ├── utils.ts             # cn(), formatting helpers
+   122→│   │   │   └── constants.ts         # API_URL, FREQ_PRESETS, PAGE_SIZES
+   123→│   │   ├── styles/
+   124→│   │   │   └── globals.css          # CSS variables, theme tokens
+   125→│   │   └── router.tsx
+   126→│   ├── public/
+   127→│   ├── .env.example
+   128→│   ├── .gitignore
+   129→│   ├── index.html
+   130→│   ├── package.json
+   131→│   ├── tsconfig.json
+   132→│   ├── vite.config.ts
+   133→│   ├── tailwind.config.ts
+   134→│   ├── README.md
+   135→│   └── Dockerfile
+   136→├── .gitignore
+   137→├── README.md                        # top-level: architecture diagram + setup
+   138→└── docker-compose.yml               # local dev: backend + frontend + mongo (optional local mongo)
+   139→```
+   140→
+   141→---
+   142→
+   143→## 2. Backend — FastAPI
+   144→
+   145→### 2.1 Tech stack
+   146→
+   147→| Concern | Choice | Version |
+   148→| --- | --- | --- |
+   149→| Runtime | Python | 3.11+ |
+   150→| Framework | FastAPI | 0.115+ |
+   151→| ASGI server | Uvicorn | 0.32+ |
+   152→| MongoDB driver | Motor (async) | 3.6+ |
+   153→| Settings | pydantic-settings | 2.6+ |
+   154→| Validation | Pydantic v2 | 2.10+ |
+   155→| CSV parsing | Python stdlib `csv` (DictReader) | — |
+   156→| Auth | `python-jose[cryptography]` for JWT, `passlib[bcrypt]` for hashing | latest |
+   157→| Rate limiting | `slowapi` | latest |
+   158→| CORS | `starlette.middleware.cors` | bundled |
+   159→| Testing | `pytest` + `pytest-asyncio` + `httpx` | latest |
+   160→
+   161→### 2.2 `requirements.txt`
+   162→
+   163→```
+   164→fastapi==0.115.6
+   165→uvicorn[standard]==0.32.1
+   166→motor==3.6.0
+   167→pydantic==2.10.4
+   168→pydantic-settings==2.7.0
+   169→python-jose[cryptography]==3.3.0
+   170→passlib[bcrypt]==1.7.4
+   171→slowapi==0.1.9
+   172→python-multipart==0.0.20
+   173→httpx==0.28.1
+   174→pytest==8.3.4
+   175→pytest-asyncio==0.25.0
+   176→```
+   177→
+   178→### 2.3 Environment variables (`backend/.env.example`)
+   179→
+   180→```bash
+   181→# MongoDB Atlas connection string (from Atlas dashboard → Connect → Drivers)
+   182→MONGODB_URL="mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority"
+   183→MONGODB_DB_NAME="leetcode_tracker"
+   184→
+   185→# JWT — generate with: openssl rand -hex 32
+   186→JWT_SECRET_KEY="change-me-to-a-64-char-hex-string"
+   187→JWT_ALGORITHM="HS256"
+   188→ACCESS_TOKEN_EXPIRE_MINUTES=15
+   189→REFRESH_TOKEN_EXPIRE_DAYS=7
+   190→
+   191→# CORS — frontend origin(s), comma-separated
+   192→CORS_ORIGINS="http://localhost:5173,https://your-frontend.vercel.app"
+   193→
+   194→# Cookie settings
+   195→COOKIE_SECURE=false   # true in production (HTTPS only)
+   196→COOKIE_SAMESITE="lax"
+   197→
+   198→# Upload limit
+   199→MAX_CSV_SIZE_BYTES=5242880   # 5 MB
+   200→```
+   201→
+   202→### 2.4 Database schema (MongoDB collections)
+   203→
+   204→Use **three collections**. Use `_id: ObjectId` as the primary key, and store `owner_id` as a string (the user's `_id` hex) on every owned document.
+   205→
+   206→#### `users`
+   207→
+   208→```json
+   209→{
+   210→  "_id": ObjectId,
+   211→  "email": "alice@example.com",         // unique, lowercased, indexed
+   212→  "name": "Alice",
+   213→  "hashed_password": "$2b$12$...",      // bcrypt
+   214→  "created_at": ISODate,
+   215→  "updated_at": ISODate
+   216→}
+   217→```
+   218→
+   219→Indexes:
+   220→- `unique` on `email` (case-insensitive — store lowercased)
+   221→
+   222→#### `sheets`
+   223→
+   224→```json
+   225→{
+   226→  "_id": ObjectId,
+   227→  "owner_id": "65f...",                 // user._id hex string
+   228→  "name": "DP",                          // user-facing alias
+   229→  "created_at": ISODate,
+   230→  "updated_at": ISODate
+   231→}
+   232→```
+   233→
+   234→Indexes:
+   235→- `owner_id` (regular)
+   236→- compound `(owner_id, name)` unique — prevent duplicate sheet names per user
+   237→
+   238→#### `questions`
+   239→
+   240→Denormalized: one document per question, **per sheet**. This avoids the 16 MB document-size limit you'd hit with 700+ embedded questions per sheet, and lets the DB do filtering/sorting/pagination natively.
+   241→
+   242→```json
+   243→{
+   244→  "_id": ObjectId,
+   245→  "sheet_id": "65f...",
+   246→  "owner_id": "65f...",                 // denormalized for auth checks
+   247→  "leetcode_id": 1,                      // the CSV "ID" column
+   248→  "url": "https://leetcode.com/problems/two-sum",
+   249→  "title": "Two Sum",
+   250→  "difficulty": "Easy",                  // "Easy" | "Medium" | "Hard"
+   251→  "acceptance": 57.5,                    // float, 0-100
+   252→  "frequency": 100.0,                    // float, 0-100
+   253→  "solved": false,                       // bool
+   254→  "solved_at": null,                     // ISODate or null
+   255→  "created_at": ISODate
+   256→}
+   257→```
+   258→
+   259→Indexes:
+   260→- `owner_id`
+   261→- `sheet_id`
+   262→- compound `(sheet_id, leetcode_id)` unique — prevents duplicates within a sheet
+   263→- compound `(sheet_id, difficulty)` — for filter queries
+   264→- compound `(sheet_id, frequency)` — for range + sort
+   265→- compound `(sheet_id, acceptance)` — for range + sort
+   266→- text index on `title` (or use regex substring match — see §2.7)
+   267→
+   268→### 2.5 Auth — JWT flow
+   269→
+   270→**Two tokens, refresh in httpOnly cookie:**
+   271→
+   272→| Token | Lifetime | Storage | Purpose |
+   273→| --- | --- | --- | --- |
+   274→| Access token | 15 minutes | Frontend memory (or localStorage) | Sent as `Authorization: Bearer <token>` on every API call |
+   275→| Refresh token | 7 days | httpOnly cookie named `lt_refresh` | Used by frontend interceptor to silently obtain new access tokens |
+   276→
+   277→**Refresh token rotation:** every time `/api/auth/refresh` is called, issue a new refresh token and invalidate the old one (store a `token_id` in the user doc and a `revoked` set — or simpler v1: just rotate without revocation, accept the small risk).
+   278→
+   279→#### Endpoints
+   280→
+   281→```
+   282→POST   /api/auth/register
+   283→       body: { email, password, name }
+   284→       201: { user: { id, email, name }, access_token }
+   285→       sets: lt_refresh cookie
+   286→       409: email already taken
+   287→       422: invalid input
+   288→
+   289→POST   /api/auth/login
+   290→       body: { email, password }
+   291→       200: { user, access_token }
+   292→       sets: lt_refresh cookie
+   293→       401: invalid credentials
+   294→       429: rate limited (5/minute per IP)
+   295→
+   296→POST   /api/auth/refresh
+   297→       reads: lt_refresh cookie
+   298→       200: { access_token }
+   299→       sets: new lt_refresh cookie (rotated)
+   300→       401: invalid/expired refresh token → frontend must redirect to /login
+   301→
+   302→POST   /api/auth/logout
+   303→       clears: lt_refresh cookie
+   304→       200: { ok: true }
+   305→
+   306→GET    /api/auth/me
+   307→       header: Authorization: Bearer <access_token>
+   308→       200: { id, email, name, created_at }
+   309→       401: missing/invalid token
+   310→```
+   311→
+   312→#### `app/security.py` (reference implementation)
+   313→
+   314→```python
+   315→from datetime import datetime, timedelta, timezone
+   316→from typing import Any
+   317→from jose import jwt, JWTError
+   318→from passlib.context import CryptContext
+   319→
+   320→pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+   321→
+   322→def hash_password(p: str) -> str:
+   323→    return pwd_context.hash(p)
+   324→
+   325→def verify_password(plain: str, hashed: str) -> bool:
+   326→    return pwd_context.verify(plain, hashed)
+   327→
+   328→def create_access_token(subject: str, expires_minutes: int, secret: str, algo: str) -> str:
+   329→    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
+   330→    return jwt.encode({"sub": subject, "exp": expire, "type": "access"}, secret, algorithm=algo)
+   331→
+   332→def create_refresh_token(subject: str, expires_days: int, secret: str, algo: str) -> str:
+   333→    expire = datetime.now(timezone.utc) + timedelta(days=expires_days)
+   334→    return jwt.encode({"sub": subject, "exp": expire, "type": "refresh"}, secret, algorithm=algo)
+   335→
+   336→def decode_token(token: str, secret: str, algo: str) -> dict[str, Any] | None:
+   337→    try:
+   338→        return jwt.decode(token, secret, algorithms=[algo])
+   339→    except JWTError:
+   340→        return None
+   341→```
+   342→
+   343→#### `app/deps.py` — `get_current_user`
+   344→
+   345→```python
+   346→from fastapi import Depends, HTTPException, status, Request
+   347→from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+   348→
+   349→bearer = HTTPBearer(auto_error=False)
+   350→
+   351→async def get_current_user(
+   352→    request: Request,
+   353→    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
+   354→    db = Depends(get_db),
+   355→):
+   356→    if creds is None or creds.scheme.lower() != "bearer":
+   357→        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+   358→    payload = decode_token(creds.credentials, settings.JWT_SECRET_KEY, settings.JWT_ALGORITHM)
+   359→    if not payload or payload.get("type") != "access":
+   360→        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+   361→    user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+   362→    if not user:
+   363→        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+   364→    return user
+   365→```
+   366→
+   367→### 2.6 Routes — sheets & questions
+   368→
+   369→All routes below require `Authorization: Bearer <access_token>`. Every query MUST filter by `owner_id == current_user._id` — never trust a sheet_id from the URL without ownership check.
+   370→
+   371→```
+   372→GET    /api/sheets
+   373→       200: { sheets: [{ id, name, question_count, solved_count, created_at, updated_at }] }
+   374→
+   375→POST   /api/sheets
+   376→       body: { name: string }
+   377→       201: { sheet: { id, name, question_count: 0, ... } }
+   378→       409: sheet with that name already exists for this user
+   379→       422: name empty or > 60 chars
+   380→
+   381→GET    /api/sheets/{sheet_id}
+   382→       200: { sheet: { id, name, ... }, stats: { total, solved, by_difficulty: { easy, medium, hard } } }
+   383→       404: not found or not owned by current user
+   384→
+   385→PATCH  /api/sheets/{sheet_id}
+   386→       body: { name?: string }
+   387→       200: { sheet: {...} }
+   388→       404 / 409 (duplicate name)
+   389→
+   390→DELETE /api/sheets/{sheet_id}
+   391→       200: { ok: true }
+   392→       also deletes all child question documents (cascade)
+   393→       404
+   394→
+   395→POST   /api/sheets/{sheet_id}/upload
+   396→       multipart/form-data: file=<csv file>
+   397→       Behavior: replaces all questions in this sheet with the CSV contents.
+   398→                 For each question_id in the CSV that already exists & is solved,
+   399→                 preserve the solved flag.
+   400→       200: { sheet: {...}, imported: number, skipped: number, preserved_solved: number }
+   401→       400: invalid CSV (header mismatch, no valid rows)
+   402→       413: file too large
+   403→
+   404→POST   /api/sheets/{sheet_id}/questions
+   405→       body: { leetcode_id, url, title, difficulty, acceptance, frequency }
+   406→       201: { question: {...} }
+   407→       409: leetcode_id already exists in this sheet
+   408→
+   409→PATCH  /api/sheets/{sheet_id}/questions/{question_id}
+   410→       body: { solved?: bool }
+   411→       200: { question: {...} }
+   412→       404
+   413→
+   414→DELETE /api/sheets/{sheet_id}/questions/{question_id}
+   415→       200: { ok: true }
+   416→       404
+   417→```
+   418→
+   419→#### Query endpoint — `GET /api/sheets/{sheet_id}/questions`
+   420→
+   421→This is the workhorse. Supports filtering, sorting, pagination.
+   422→
+   423→```
+   424→Query params:
+   425→  search        string    case-insensitive substring on title (regex)
+   426→  difficulty    string    comma-separated: "Easy,Medium" (OR within this filter)
+   427→  freq_min      number    0-100
+   428→  freq_max      number    0-100
+   429→  acc_min       number    0-100
+   430→  acc_max       number    0-100
+   431→  freq_presets  string    comma-separated ints: "100,75,50,25" (OR — overrides freq_min/freq_max if non-empty)
+   432→  solved        string    "all" | "solved" | "unsolved" (default: all)
+   433→  sort_by       string    "id" | "title" | "difficulty" | "acceptance" | "frequency" (default: frequency)
+   434→  sort_dir      string    "asc" | "desc" (default: desc)
+   435→  page          int       1-indexed (default: 1)
+   436→  page_size     int       25 | 50 | 100 (default: 50)
+   437→
+   438→Response 200:
+   439→{
+   440→  questions: [{ id, leetcode_id, url, title, difficulty, acceptance, frequency, solved }],
+   441→  total: number,         // total matching (after filter, before pagination)
+   442→  page: number,
+   443→  page_size: number,
+   444→  total_pages: number,
+   445→  stats: {               // stats are ALWAYS for the full sheet, not the filtered subset
+   446→    total: number,
+   447→    solved: number,
+   448→    by_difficulty: { easy: {total, solved}, medium: {...}, hard: {...} }
+   449→  }
+   450→}
+   451→```
+   452→
+   453→### 2.7 Reference: building the MongoDB query
+   454→
+   455→```python
+   456→# app/routes/questions.py
+   457→async def list_questions(sheet_id: str, params: QuestionQueryParams, user, db):
+   458→    # Ownership check
+   459→    sheet = await db.sheets.find_one({"_id": ObjectId(sheet_id), "owner_id": str(user["_id"])})
+   460→    if not sheet:
+   461→        raise HTTPException(404, "Sheet not found")
+   462→
+   463→    query: dict = {"sheet_id": sheet_id, "owner_id": str(user["_id"])}
+   464→
+   465→    if params.search:
+   466→        # Case-insensitive substring — use regex. For larger datasets, switch to
+   467→        # Atlas Search ($search) with an autocomplete index on `title`.
+   468→        query["title"] = {"$regex": re.escape(params.search), "$options": "i"}
+   469→
+   470→    if params.difficulty:
+   471→        diffs = [d.strip() for d in params.difficulty.split(",") if d.strip()]
+   472→        if diffs:
+   473→            query["difficulty"] = {"$in": diffs}
+   474→
+   475→    # Frequency: presets override range
+   476→    if params.freq_presets:
+   477→        presets = [int(x) for x in params.freq_presets.split(",") if x.strip().isdigit()]
+   478→        if presets:
+   479→            # Match rounded frequency to any preset
+   480→            query["$or"] = [{"frequency": {"$gte": p - 0.5, "$lt": p + 0.5}} for p in presets]
+   481→    else:
+   482→        query["frequency"] = {"$gte": params.freq_min, "$lte": params.freq_max}
+   483→
+   484→    if params.acc_min != 0 or params.acc_max != 100:
+   485→        query["acceptance"] = {"$gte": params.acc_min, "$lte": params.acc_max}
+   486→
+   487→    if params.solved == "solved":
+   488→        query["solved"] = True
+   489→    elif params.solved == "unsolved":
+   490→        query["solved"] = False
+   491→
+   492→    sort_field = {
+   493→        "id": "leetcode_id",
+   494→        "title": "title",
+   495→        "difficulty": "difficulty",  # store as 0/1/2 in DB or use a sort map
+   496→        "acceptance": "acceptance",
+   497→        "frequency": "frequency",
+   498→    }[params.sort_by]
+   499→    sort_dir = 1 if params.sort_dir == "asc" else -1
+   500→
+   501→    skip = (params.page - 1) * params.page_size
+   502→
+   503→    cursor = db.questions.find(query).sort(sort_field, sort_dir).skip(skip).limit(params.page_size)
+   504→    questions = await cursor.to_list(length=params.page_size)
+   505→    total = await db.questions.count_documents(query)
+   506→
+   507→    # Sheet-level stats (not filtered)
+   508→    stats = await compute_sheet_stats(sheet_id, db)
+   509→
+   510→    return {
+   511→        "questions": [serialize_question(q) for q in questions],
+   512→        "total": total,
+   513→        "page": params.page,
+   514→        "page_size": params.page_size,
+   515→        "total_pages": (total + params.page_size - 1) // params.page_size,
+   516→        "stats": stats,
+   517→    }
+   518→```
+   519→
+   520→> **Tip:** For difficulty sorting, either (a) store a `difficulty_order` int field (`Easy=0`, `Medium=1`, `Hard=2`) updated on insert, or (b) add a `$addFields` stage in an aggregation pipeline that maps the string to a number. Option (a) is simpler and faster.
+   521→
+   522→### 2.8 CSV parsing — server-side
+   523→
+   524→Use Python's stdlib `csv` module with `io.StringIO`. Stream-parse to handle 5 MB files comfortably.
+   525→
+   526→```python
+   527→# app/services/csv_parser.py
+   528→import csv, io
+   529→from typing import Iterable
+   530→
+   531→EXPECTED_HEADERS = ["ID", "URL", "Title", "Difficulty", "Acceptance %", "Frequency %"]
+   532→VALID_DIFFICULTIES = {"Easy", "Medium", "Hard"}
+   533→
+   534→class CsvValidationError(Exception):
+   535→    pass
+   536→
+   537→def parse_leetcode_csv(content: str) -> tuple[list[dict], int]:
+   538→    """Returns (questions, skipped_count)."""
+   539→    reader = csv.DictReader(io.StringIO(content))
+   540→    headers = [h.strip() for h in (reader.fieldnames or [])]
+   541→    missing = [h for h in EXPECTED_HEADERS if h not in headers]
+   542→    if missing:
+   543→        raise CsvValidationError(f"Missing required columns: {', '.join(missing)}")
+   544→
+   545→    questions, skipped = [], 0
+   546→    for row in reader:
+   547→        try:
+   548→            q = {
+   549→                "leetcode_id": int(row["ID"]),
+   550→                "url": row["URL"].strip(),
+   551→                "title": row["Title"].strip(),
+   552→                "difficulty": row["Difficulty"].strip(),
+   553→                "acceptance": float(row["Acceptance %"].strip().rstrip("%")),
+   554→                "frequency": float(row["Frequency %"].strip().rstrip("%")),
+   555→            }
+   556→            if q["difficulty"] not in VALID_DIFFICULTIES:
+   557→                raise ValueError("bad difficulty")
+   558→            if not q["url"] or not q["title"]:
+   559→                raise ValueError("empty required field")
+   560→            questions.append(q)
+   561→        except (ValueError, KeyError, TypeError):
+   562→            skipped += 1
+   563→
+   564→    return questions, skipped
+   565→```
+   566→
+   567→#### Replace-existing flow (preserves solved state)
+   568→
+   569→```python
+   570→# app/routes/upload.py
+   571→async def upload_csv(sheet_id: str, file: UploadFile, user, db):
+   572→    # ... ownership check ...
+   573→    content = (await file.read()).decode("utf-8", errors="replace")
+   574→    if len(content) > settings.MAX_CSV_SIZE_BYTES:
+   575→        raise HTTPException(413, "File too large")
+   576→
+   577→    try:
+   578→        new_questions, skipped = parse_leetcode_csv(content)
+   579→    except CsvValidationError as e:
+   580→        raise HTTPException(400, str(e))
+   581→
+   582→    if not new_questions:
+   583→        raise HTTPException(400, "No valid rows in CSV")
+   584→
+   585→    # Fetch currently-solved leetcode_ids in this sheet
+   586→    existing_solved = await db.questions.find(
+   587→        {"sheet_id": sheet_id, "solved": True},
+   588→        {"leetcode_id": 1, "_id": 0}
+   589→    ).to_list(length=None)
+   590→    solved_set = {q["leetcode_id"] for q in existing_solved}
+   591→
+   592→    # Atomic-ish replace: delete all, insert all (use a transaction for safety)
+   593→    async with await db.client.start_session() as session:
+   594→        async with session.start_transaction():
+   595→            await db.questions.delete_many({"sheet_id": sheet_id}, session=session)
+   596→            docs = [
+   597→                {
+   598→                    **q,
+   599→                    "sheet_id": sheet_id,
+   600→                    "owner_id": str(user["_id"]),
+   601→                    "solved": q["leetcode_id"] in solved_set,
+   602→                    "solved_at": None,
+   603→                    "difficulty_order": {"Easy": 0, "Medium": 1, "Hard": 2}[q["difficulty"]],
+   604→                    "created_at": datetime.now(timezone.utc),
+   605→                }
+   606→                for q in new_questions
+   607→            ]
+   608→            if docs:
+   609→                await db.questions.insert_many(docs, session=session)
+   610→            await db.sheets.update_one(
+   611→                {"_id": ObjectId(sheet_id)},
+   612→                {"$set": {"updated_at": datetime.now(timezone.utc)}},
+   613→                session=session,
+   614→            )
+   615→
+   616→    preserved = sum(1 for q in new_questions if q["leetcode_id"] in solved_set)
+   617→    return {"imported": len(new_questions), "skipped": skipped, "preserved_solved": preserved}
+   618→```
+   619→
+   620→### 2.9 `app/main.py`
+   621→
+   622→```python
+   623→from contextlib import asynccontextmanager
+   624→from fastapi import FastAPI
+   625→from fastapi.middleware.cors import CORSMiddleware
+   626→from slowapi import Limiter
+   627→from slowapi.util import get_remote_address
+   628→from slowapi.errors import RateLimitExceeded
+   629→from slowapi.middleware import SlowAPIMiddleware
+   630→
+   631→from app.config import settings
+   632→from app.database import db_client
+   633→from app.routes import auth, sheets, questions, upload
+   634→
+   635→limiter = Limiter(key_func=get_remote_address)
+   636→
+   637→@asynccontextmanager
+   638→async def lifespan(app: FastAPI):
+   639→    # Open MongoDB client
+   640→    yield
+   641→    db_client.close()
+   642→
+   643→app = FastAPI(title="LeetCode Tracker API", version="1.0.0", lifespan=lifespan)
+   644→app.state.limiter = limiter
+   645→app.add_middleware(SlowAPIMiddleware)
+   646→
+   647→app.add_middleware(
+   648→    CORSMiddleware,
+   649→    allow_origins=[o.strip() for o in settings.CORS_ORIGINS.split(",")],
+   650→    allow_credentials=True,  # required for cookies
+   651→    allow_methods=["*"],
+   652→    allow_headers=["*"],
+   653→)
+   654→
+   655→@app.exception_handler(RateLimitExceeded)
+   656→async def rate_limit_handler(request, exc):
+   657→    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+   658→
+   659→app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+   660→app.include_router(sheets.router, prefix="/api/sheets", tags=["sheets"])
+   661→app.include_router(questions.router, prefix="/api/sheets", tags=["questions"])
+   662→app.include_router(upload.router, prefix="/api/sheets", tags=["upload"])
+   663→
+   664→@app.get("/health")
+   665→async def health():
+   666→    return {"status": "ok"}
+   667→```
+   668→
+   669→### 2.10 Rate limiting
+   670→
+   671→Apply to auth routes specifically:
+   672→
+   673→```python
+   674→# app/routes/auth.py
+   675→from fastapi import APIRouter, Request, Response
+   676→from slowapi import Limiter
+   677→
+   678→router = APIRouter()
+   679→
+   680→@router.post("/register")
+   681→@limiter.limit("5/minute")
+   682→async def register(request: Request, body: RegisterIn, response: Response, db=Depends(get_db)):
+   683→    ...
+   684→
+   685→@router.post("/login")
+   686→@limiter.limit("5/minute")
+   687→async def login(request: Request, body: LoginIn, response: Response, db=Depends(get_db)):
+   688→    ...
+   689→```
+   690→
+   691→> **Note:** `slowapi` requires the `request: Request` parameter on rate-limited endpoints.
+   692→
+   693→### 2.11 Testing
+   694→
+   695→Use `pytest` + `pytest-asyncio` + `httpx.AsyncClient`. Use a separate test database (e.g. `leetcode_tracker_test`) — drop it between test runs.
+   696→
+   697→```python
+   698→# tests/conftest.py
+   699→import pytest
+   700→from httpx import AsyncClient, ASGITransport
+   701→from app.main import app
+   702→from app.database import get_db
+   703→
+   704→@pytest.fixture
+   705→async def client():
+   706→    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+   707→        yield c
+   708→
+   709→@pytest.fixture(autouse=True)
+   710→async def clean_db():
+   711→    db = await anext(get_db())
+   712→    await db.client.drop_database("leetcode_tracker_test")
+   713→    yield
+   714→```
+   715→
+   716→Minimum test coverage:
+   717→- Auth: register → login → me → refresh → logout
+   718→- Auth: 401 on bad token, expired token, wrong password
+   719→- Sheets: create → list → rename → delete; cannot access another user's sheet
+   720→- Upload: valid CSV, header mismatch, oversized file, replace preserves solved
+   721→
+   722→---
+   723→
+   724→## 3. Frontend — React + Vite + TypeScript
+   725→
+   726→### 3.1 Tech stack
+   727→
+   728→| Concern | Choice | Version |
+   729→| --- | --- | --- |
+   730→| Build tool | Vite | 6+ |
+   731→| Framework | React | 19+ |
+   732→| Language | TypeScript | 5.6+ |
+   733→| Routing | React Router | 7+ |
+   734→| Data fetching | TanStack Query | 5+ |
+   735→| HTTP | axios | 1.7+ |
+   736→| Styling | Tailwind CSS | 4+ |
+   737→| UI primitives | shadcn/ui (Radix UI) | latest |
+   738→| Font | Geist | 1.3+ |
+   739→| Icons | lucide-react | latest |
+   740→| Toasts | sonner | latest |
+   741→| Forms | react-hook-form + zod | latest |
+   742→
+   743→### 3.2 `package.json` (key deps)
+   744→
+   745→```json
+   746→{
+   747→  "name": "leetcode-tracker-frontend",
+   748→  "private": true,
+   749→  "version": "1.0.0",
+   750→  "type": "module",
+   751→  "scripts": {
+   752→    "dev": "vite",
+   753→    "build": "tsc -b && vite build",
+   754→    "preview": "vite preview",
+   755→    "lint": "eslint ."
+   756→  },
+   757→  "dependencies": {
+   758→    "@tanstack/react-query": "^5.62.0",
+   759→    "axios": "^1.7.9",
+   760→    "class-variance-authority": "^0.7.1",
+   761→    "clsx": "^2.1.1",
+   762→    "geist": "^1.3.1",
+   763→    "lucide-react": "^0.468.0",
+   764→    "react": "^19.0.0",
+   765→    "react-dom": "^19.0.0",
+   766→    "react-hook-form": "^7.54.0",
+   767→    "react-router-dom": "^7.1.0",
+   768→    "sonner": "^1.7.1",
+   769→    "tailwind-merge": "^2.5.5",
+   770→    "zod": "^3.24.0"
+   771→  },
+   772→  "devDependencies": {
+   773→    "@tailwindcss/postcss": "^4.0.0",
+   774→    "@types/react": "^19",
+   775→    "@types/react-dom": "^19",
+   776→    "@vitejs/plugin-react": "^4.3.0",
+   777→    "eslint": "^9",
+   778→    "tailwindcss": "^4.0.0",
+   779→    "typescript": "^5.6",
+   780→    "vite": "^6.0.0"
+   781→  }
+   782→}
+   783→```
+   784→
+   785→### 3.3 Environment variables (`frontend/.env.example`)
+   786→
+   787→```bash
+   788→# Backend API URL
+   789→VITE_API_URL="http://localhost:8000"
+   790→
+   791→# App name (shown in header)
+   792→VITE_APP_NAME="LeetCode Tracker"
+   793→```
+   794→
+   795→### 3.4 `vite.config.ts`
+   796→
+   797→```ts
+   798→import { defineConfig } from "vite";
+   799→import react from "@vitejs/plugin-react";
+   800→import path from "path";
+   801→
+   802→export default defineConfig({
+   803→  plugins: [react()],
+   804→  resolve: {
+   805→    alias: { "@": path.resolve(__dirname, "./src") },
+   806→  },
+   807→  server: {
+   808→    port: 5173,
+   809→    // Proxy API calls in dev to avoid CORS issues — backend must still allow the origin
+   810→    proxy: {
+   811→      "/api": {
+   812→        target: "http://localhost:8000",
+   813→        changeOrigin: true,
+   814→      },
+   815→    },
+   816→  },
+   817→});
+   818→```
+   819→
+   820→### 3.5 API client — axios with refresh-on-401 interceptor
+   821→
+   822→This is the most important piece of frontend auth logic. Single-flight refresh (don't fire 10 refresh calls when 10 parallel requests all 401).
+   823→
+   824→```ts
+   825→// src/api/client.ts
+   826→import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+   827→
+   828→const API_URL = import.meta.env.VITE_API_URL;
+   829→
+   830→let accessToken: string | null = null;
+   831→let refreshPromise: Promise<string> | null = null;
+   832→
+   833→export function setAccessToken(t: string | null) {
+   834→  accessToken = t;
+   835→}
+   836→
+   837→export const api = axios.create({ baseURL: `${API_URL}/api`, withCredentials: true });
+   838→
+   839→api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+   840→  if (accessToken) {
+   841→    config.headers.Authorization = `Bearer ${accessToken}`;
+   842→  }
+   843→  return config;
+   844→});
+   845→
+   846→api.interceptors.response.use(
+   847→  (r) => r,
+   848→  async (error: AxiosError) => {
+   849→    const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+   850→    if (error.response?.status === 401 && !original._retry && !original.url?.includes("/auth/")) {
+   851→      original._retry = true;
+   852→      try {
+   853→        if (!refreshPromise) {
+   854→          refreshPromise = api.post("/auth/refresh").then((r) => r.data.access_token);
+   855→        }
+   856→        const newToken = await refreshPromise;
+   857→        refreshPromise = null;
+   858→        setAccessToken(newToken);
+   859→        original.headers.Authorization = `Bearer ${newToken}`;
+   860→        return api(original);
+   861→      } catch {
+   862→        refreshPromise = null;
+   863→        setAccessToken(null);
+   864→        window.location.href = "/login";
+   865→        return Promise.reject(error);
+   866→      }
+   867→    }
+   868→    return Promise.reject(error);
+   869→  },
+   870→);
+   871→```
+   872→
+   873→### 3.6 Auth context
+   874→
+   875→```tsx
+   876→// src/context/AuthContext.tsx
+   877→import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+   878→import { api, setAccessToken } from "@/api/client";
+   879→
+   880→interface User { id: string; email: string; name: string; }
+   881→interface AuthCtx {
+   882→  user: User | null;
+   883→  loading: boolean;
+   884→  login: (email: string, password: string) => Promise<void>;
+   885→  register: (email: string, password: string, name: string) => Promise<void>;
+   886→  logout: () => Promise<void>;
+   887→}
+   888→
+   889→const Ctx = createContext<AuthCtx>(null!);
+   890→export const useAuth = () => useContext(Ctx);
+   891→
+   892→export function AuthProvider({ children }: { children: ReactNode }) {
+   893→  const [user, setUser] = useState<User | null>(null);
+   894→  const [loading, setLoading] = useState(true);
+   895→
+   896→  // On mount: try to get a fresh access token via refresh cookie
+   897→  useEffect(() => {
+   898→    (async () => {
+   899→      try {
+   900→        const r = await api.post("/auth/refresh");
+   901→        setAccessToken(r.data.access_token);
+   902→        const me = await api.get("/auth/me");
+   903→        setUser(me.data);
+   904→      } catch {
+   905→        setAccessToken(null);
+   906→        setUser(null);
+   907→      } finally {
+   908→        setLoading(false);
+   909→      }
+   910→    })();
+   911→  }, []);
+   912→
+   913→  const login = async (email: string, password: string) => {
+   914→    const r = await api.post("/auth/login", { email, password });
+   915→    setAccessToken(r.data.access_token);
+   916→    setUser(r.data.user);
+   917→  };
+   918→
+   919→  const register = async (email: string, password: string, name: string) => {
+   920→    const r = await api.post("/auth/register", { email, password, name });
+   921→    setAccessToken(r.data.access_token);
+   922→    setUser(r.data.user);
+   923→  };
+   924→
+   925→  const logout = async () => {
+   926→    await api.post("/auth/logout");
+   927→    setAccessToken(null);
+   928→    setUser(null);
+   929→  };
+   930→
+   931→  return <Ctx.Provider value={{ user, loading, login, register, logout }}>{children}</Ctx.Provider>;
+   932→}
+   933→```
+   934→
+   935→### 3.7 Routing & protected routes
+   936→
+   937→```tsx
+   938→// src/App.tsx
+   939→import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+   940→import { AuthProvider, useAuth } from "@/context/AuthContext";
+   941→import { ProtectedRoute } from "@/components/ProtectedRoute";
+   942→import LoginPage from "@/pages/LoginPage";
+   943→import RegisterPage from "@/pages/RegisterPage";
+   944→import DashboardPage from "@/pages/DashboardPage";
+   945→
+   946→function Router() {
+   947→  const { loading } = useAuth();
+   948→  if (loading) return <div className="flex h-screen items-center justify-center text-muted">Loading…</div>;
+   949→  return (
+   950→    <Routes>
+   951→      <Route path="/login" element={<LoginPage />} />
+   952→      <Route path="/register" element={<RegisterPage />} />
+   953→      <Route path="/" element={
+   954→        <ProtectedRoute>
+   955→          <DashboardPage />
+   956→        </ProtectedRoute>
+   957→      } />
+   958→      <Route path="*" element={<Navigate to="/" />} />
+   959→    </Routes>
+   960→  );
+   961→}
+   962→
+   963→export default function App() {
+   964→  return (
+   965→    <AuthProvider>
+   966→      <BrowserRouter>
+   967→        <Router />
+   968→      </BrowserRouter>
+   969→    </AuthProvider>
+   970→  );
+   971→}
+   972→```
+   973→
+   974→```tsx
+   975→// src/components/ProtectedRoute.tsx
+   976→import { Navigate } from "react-router-dom";
+   977→import { useAuth } from "@/context/AuthContext";
+   978→import { ReactNode } from "react";
+   979→
+   980→export function ProtectedRoute({ children }: { children: ReactNode }) {
+   981→  const { user } = useAuth();
+   982→  if (!user) return <Navigate to="/login" replace />;
+   983→  return <>{children}</>;
+   984→}
+   985→```
+   986→
+   987→### 3.8 TanStack Query hooks for sheets
+   988→
+   989→```ts
+   990→// src/hooks/useSheets.ts
+   991→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+   992→import { api } from "@/api/client";
+   993→import type { Sheet, Question, QuestionQuery } from "@/lib/types";
+   994→
+   995→export function useSheets() {
+   996→  return useQuery({
+   997→    queryKey: ["sheets"],
+   998→    queryFn: async () => (await api.get("/sheets")).data.sheets as Sheet[],
+   999→  });
+  1000→}
+  1001→
+  1002→export function useCreateSheet() {
+  1003→  const qc = useQueryClient();
+  1004→  return useMutation({
+  1005→    mutationFn: async (name: string) => (await api.post("/sheets", { name })).data.sheet,
+  1006→    onSuccess: () => qc.invalidateQueries({ queryKey: ["sheets"] }),
+  1007→  });
+  1008→}
+  1009→
+  1010→export function useDeleteSheet() {
+  1011→  const qc = useQueryClient();
+  1012→  return useMutation({
+  1013→    mutationFn: async (id: string) => api.delete(`/sheets/${id}`),
+  1014→    onSuccess: () => qc.invalidateQueries({ queryKey: ["sheets"] }),
+  1015→  });
+  1016→}
+  1017→
+  1018→export function useQuestions(sheetId: string | null, query: QuestionQuery) {
+  1019→  return useQuery({
+  1020→    queryKey: ["questions", sheetId, query],
+  1021→    queryFn: async () => {
+  1022→      if (!sheetId) return null;
+  1023→      const params = new URLSearchParams();
+  1024→      Object.entries(query).forEach(([k, v]) => params.append(k, String(v)));
+  1025→      return (await api.get(`/sheets/${sheetId}/questions?${params}`)).data;
+  1026→    },
+  1027→    enabled: !!sheetId,
+  1028→  });
+  1029→}
+  1030→
+  1031→export function useToggleSolved(sheetId: string) {
+  1032→  const qc = useQueryClient();
+  1033→  return useMutation({
+  1034→    mutationFn: async ({ questionId, solved }: { questionId: string; solved: boolean }) =>
+  1035→      (await api.patch(`/sheets/${sheetId}/questions/${questionId}`, { solved })).data.question,
+  1036→    // Optimistic update: see TanStack Query docs
+  1037→  });
+  1038→}
+  1039→
+  1040→export function useUploadCsv() {
+  1041→  const qc = useQueryClient();
+  1042→  return useMutation({
+  1043→    mutationFn: async ({ sheetId, file, mode, alias }: {
+  1044→      sheetId?: string; file: File; mode: "create" | "replace"; alias: string;
+  1045→    }) => {
+  1046→      // If create mode: first create the sheet, then upload
+  1047→      let id = sheetId;
+  1048→      if (mode === "create") {
+  1049→        const created = (await api.post("/sheets", { name: alias })).data.sheet;
+  1050→        id = created.id;
+  1051→      }
+  1052→      const fd = new FormData();
+  1053→      fd.append("file", file);
+  1054→      const r = await api.post(`/sheets/${id}/upload`, fd);
+  1055→      qc.invalidateQueries({ queryKey: ["sheets"] });
+  1056→      qc.invalidateQueries({ queryKey: ["questions"] });
+  1057→      return r.data;
+  1058→    },
+  1059→  });
+  1060→}
+  1061→```
+  1062→
+  1063→### 3.9 Visual style — port the existing design
+  1064→
+  1065→The frontend MUST replicate the existing prototype's visual language exactly. Use the same CSS variables:
+  1066→
+  1067→```css
+  1068→/* src/styles/globals.css */
+  1069→:root, .dark {
+  1070→  --background: #09090B;
+  1071→  --foreground: #FAFAFA;
+  1072→  --card: #111113;
+  1073→  --border: #27272A;
+  1074→  --accent: #2563EB;
+  1075→  --muted: #A1A1AA;
+  1076→  --easy: #22C55E;
+  1077→  --medium: #FACC15;
+  1078→  --hard: #EF4444;
+  1079→  --radius: 6px;
+  1080→  color-scheme: dark;
+  1081→}
+  1082→
+  1083→.light {
+  1084→  --background: #FFFFFF;
+  1085→  --foreground: #09090B;
+  1086→  --card: #F4F4F5;
+  1087→  --border: #E4E4E7;
+  1088→  --accent: #2563EB;
+  1089→  --muted: #71717A;
+  1090→  --easy: #22C55E;
+  1091→  --medium: #CA8A04;
+  1092→  --hard: #EF4444;
+  1093→  color-scheme: light;
+  1094→}
+  1095→```
+  1096→
+  1097→Use the Geist font. Default to dark theme. Linear-style density: 1px borders, no shadows, tight spacing, tabular nums on numeric columns.
+  1098→
+  1099→**Component parity checklist** — port these from the existing prototype (file names match so you can copy-paste most of the JSX, only swap the data layer from `localStorage` to TanStack Query):
+  1100→
+  1101→- `Header.tsx` — adds "Logout" button + user avatar/initial
+  1102→- `SheetTabs.tsx` — same UX (switch / rename / delete with confirm)
+  1103→- `UploadDialog.tsx` — same two-step flow; on confirm calls `useUploadCsv`
+  1104→- `FiltersSidebar.tsx` — same controls; debounce the title search (300 ms) before refetching
+  1105→- `ActiveFilters.tsx` — same chip row
+  1106→- `QuestionTable.tsx` — same columns, sortable, paginated; calls `useToggleSolved` on checkbox click
+  1107→- `StatsBar.tsx` — same per-difficulty progress; reads `stats` from the questions query response
+  1108→- `DifficultyBadge.tsx` — same pill
+  1109→- `ThemeToggle.tsx` — same sun/moon toggle, persists to `localStorage` (theme is client-only, no need for server)
+  1110→- `EmptyState.tsx` — same CTA when user has zero sheets
+  1111→
+  1112→### 3.10 Auth pages
+  1113→
+  1114→`LoginPage` and `RegisterPage` should be minimal — centered card with email/password/name fields, Geist font, dark theme. Use `react-hook-form` + `zod` for validation. On success, navigate to `/`.
+  1115→
+  1116→```tsx
+  1117→// src/pages/LoginPage.tsx (sketch)
+  1118→import { useForm } from "react-hook-form";
+  1119→import { zodResolver } from "@hookform/resolvers/zod";
+  1120→import { z } from "zod";
+  1121→import { useAuth } from "@/context/AuthContext";
+  1122→import { useNavigate } from "react-router-dom";
+  1123→
+  1124→const schema = z.object({
+  1125→  email: z.string().email(),
+  1126→  password: z.string().min(8),
+  1127→});
+  1128→
+  1129→export default function LoginPage() {
+  1130→  const { login } = useAuth();
+  1131→  const nav = useNavigate();
+  1132→  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({
+  1133→    resolver: zodResolver(schema),
+  1134→  });
+  1135→
+  1136→  const onSubmit = async (data: z.infer<typeof schema>) => {
+  1137→    try {
+  1138→      await login(data.email, data.password);
+  1139→      nav("/");
+  1140→    } catch {
+  1141→      // show toast
+  1142→    }
+  1143→  };
+  1144→
+  1145→  return (/* centered card with form */);
+  1146→}
+  1147→```
+  1148→
+  1149→---
+  1150→
+  1151→## 4. CORS & Cookie Configuration
+  1152→
+  1153→The trickiest part of JWT-in-cookie. Get this right or auth will silently fail.
+  1154→
+  1155→### Backend CORS
+  1156→
+  1157→```python
+  1158→app.add_middleware(
+  1159→    CORSMiddleware,
+  1160→    allow_origins=[o.strip() for o in settings.CORS_ORIGINS.split(",")],  # NO wildcards if allow_credentials=True
+  1161→    allow_credentials=True,
+  1162→    allow_methods=["*"],
+  1163→    allow_headers=["*"],
+  1164→)
+  1165→```
+  1166→
+  1167→### Cookie settings (backend, when setting refresh token)
+  1168→
+  1169→```python
+  1170→response.set_cookie(
+  1171→    key="lt_refresh",
+  1172→    value=refresh_token,
+  1173→    httponly=True,
+  1174→    secure=settings.COOKIE_SECURE,        # False in dev, True in prod
+  1175→    samesite=settings.COOKIE_SAMESITE,    # "lax" for same-site; "none" for cross-site (requires secure=True)
+  1176→    max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+  1177→    path="/api/auth",
+  1178→)
+  1179→```
+  1180→
+  1181→> **Cross-origin note:** If frontend on `vercel.app` and backend on `railway.app`, you need `samesite="none"` and `secure=true`. Vercel and Railway both serve HTTPS by default so this works in prod. In local dev (both on localhost, different ports), `samesite="lax"` works fine.
+  1182→
+  1183→### Frontend axios
+  1184→
+  1185→```ts
+  1186→axios.create({ baseURL: API_URL, withCredentials: true });
+  1187→```
+  1188→
+  1189→`withCredentials: true` is mandatory — without it, the browser won't send the refresh cookie.
+  1190→
+  1191→---
+  1192→
+  1193→## 5. Deployment
+  1194→
+  1195→### 5.1 MongoDB Atlas setup
+  1196→
+  1197→1. Create free cluster at mongodb.com/atlas
+  1198→2. Database user: read/write to `leetcode_tracker` DB
+  1199→3. Network access: allow `0.0.0.0/0` (or restrict to your backend host IPs)
+  1200→4. Get connection string: `mongodb+srv://<user>:<pass>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority`
+  1201→5. Plug into backend `MONGODB_URL`
+  1202→
+  1203→### 5.2 Backend deploy (Render or Railway)
+  1204→
+  1205→`backend/Dockerfile`:
+  1206→
+  1207→```dockerfile
+  1208→FROM python:3.11-slim
+  1209→WORKDIR /app
+  1210→COPY requirements.txt .
+  1211→RUN pip install --no-cache-dir -r requirements.txt
+  1212→COPY . .
+  1213→EXPOSE 8000
+  1214→CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+  1215→```
+  1216→
+  1217→Set env vars on Render/Railway:
+  1218→- `MONGODB_URL`, `MONGODB_DB_NAME`, `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `CORS_ORIGINS`, `COOKIE_SECURE=true`, `COOKIE_SAMESITE=none`, `MAX_CSV_SIZE_BYTES`
+  1219→
+  1220→### 5.3 Frontend deploy (Vercel)
+  1221→
+  1222→`frontend/vite.config.ts` — already shown.
+  1223→
+  1224→Set env vars on Vercel:
+  1225→- `VITE_API_URL` = backend URL (e.g. `https://leetcode-tracker-api.onrender.com`)
+  1226→
+  1227→Add `vercel.json` for SPA routing:
+  1228→
+  1229→```json
+  1230→{
+  1231→  "rewrites": [{ "source": "/(.*)", "destination": "/" }]
+  1232→}
+  1233→```
+  1234→
+  1235→### 5.4 Local dev with docker-compose (optional)
+  1236→
+  1237→```yaml
+  1238→# docker-compose.yml
+  1239→services:
+  1240→  backend:
+  1241→    build: ./backend
+  1242→    ports: ["8000:8000"]
+  1243→    env_file: ./backend/.env
+  1244→    environment:
+  1245→      - MONGODB_URL=mongodb://mongo:27017
+  1246→      - MONGODB_DB_NAME=leetcode_tracker_dev
+  1247→      - COOKIE_SECURE=false
+  1248→      - COOKIE_SAMESITE=lax
+  1249→      - CORS_ORIGINS=http://localhost:5173
+  1250→    depends_on: [mongo]
+  1251→
+  1252→  frontend:
+  1253→    build: ./frontend
+  1254→    ports: ["5173:5173"]
+  1255→    environment:
+  1256→      - VITE_API_URL=http://localhost:8000
+  1257→    depends_on: [backend]
+  1258→
+  1259→  mongo:
+  1260→    image: mongo:7
+  1261→    ports: ["27017:27017"]
+  1262→    volumes: ["mongo_data:/data/db"]
+  1263→
+  1264→volumes:
+  1265→  mongo_data:
+  1266→```
+  1267→
+  1268→> **Note:** For local dev, you can use a local MongoDB container instead of Atlas — just point `MONGODB_URL` at it. Atlas is for production.
+  1269→
+  1270→---
+  1271→
+  1272→## 6. Acceptance Criteria
+  1273→
+  1274→The build is done when ALL of these pass:
+  1275→
+  1276→### Backend
+  1277→- [ ] `POST /api/auth/register` creates a user, returns access token, sets refresh cookie
+  1278→- [ ] `POST /api/auth/login` validates credentials, returns access token, sets refresh cookie
+  1279→- [ ] `POST /api/auth/refresh` rotates the refresh token, returns new access token
+  1280→- [ ] `POST /api/auth/logout` clears the refresh cookie
+  1281→- [ ] `GET /api/auth/me` returns current user from bearer token
+  1282→- [ ] All `/api/sheets/*` routes return 401 without auth, 404 for sheets owned by other users
+  1283→- [ ] `POST /api/sheets/{id}/upload` parses CSV, replaces questions, preserves solved state for matching leetcode_ids
+  1284→- [ ] `GET /api/sheets/{id}/questions` correctly applies all filters (search, difficulty, freq range, freq presets, acc range, solved toggle), sorts, paginates, returns stats
+  1285→- [ ] Login/register endpoints are rate-limited (5/min/IP)
+  1286→- [ ] File size > 5 MB returns 413
+  1287→- [ ] Invalid CSV header returns 400 with a helpful message
+  1288→- [ ] `pytest` suite passes with ≥ 80% coverage on `app/`
+  1289→
+  1290→### Frontend
+  1291→- [ ] `/login` and `/register` pages work; on success redirect to `/`
+  1292→- [ ] `/` is protected — unauthenticated users redirect to `/login`
+  1293→- [ ] On first app load, silently refreshes access token via cookie (no extra login if refresh valid)
+  1294→- [ ] When access token expires mid-session, the axios interceptor silently refreshes and retries the failed request
+  1295→- [ ] When refresh token is also expired, redirect to `/login`
+  1296→- [ ] Sheet tabs work: switch, rename (inline), delete (two-click confirm), create (via upload dialog)
+  1297→- [ ] Upload dialog: pick file → configure alias + create-new/replace → confirm → sheet appears
+  1298→- [ ] Filters sidebar: all six controls work, AND-across-groups, OR-within-groups, debounced title search
+  1299→- [ ] Active filters render as removable chips; "Clear all" resets everything
+  1300→- [ ] Question table: sortable, paginated (25/50/100), solved checkbox toggles server-side
+  1301→- [ ] Stats bar updates after solved toggle and after upload
+  1302→- [ ] Dark/light theme toggle works, defaults to dark, persists to localStorage
+  1303→- [ ] Empty state shown when user has zero sheets
+  1304→- [ ] Loading skeletons during data fetches
+  1305→- [ ] Toast notifications for errors and successes (sonner)
+  1306→- [ ] Mobile responsive: filters collapse to slide-over drawer, table scrolls horizontally
+  1307→
+  1308→### Integration
+  1309→- [ ] Backend deployed to Render/Railway, frontend to Vercel
+  1310→- [ ] CORS configured correctly — no console errors in browser
+  1311→- [ ] Cookies sent cross-origin with `samesite=none; secure` in production
+  1312→- [ ] Two different users cannot see or modify each other's sheets
+  1313→
+  1314→---
+  1315→
+  1316→## 7. Stretch Goals (only after the above is done)
+  1317→
+  1318→1. **Atlas Search** — replace regex title search with Atlas `$search` for better relevance + typo tolerance
+  1319→2. **CSV export** — `GET /api/sheets/{id}/export` returns the sheet as a CSV
+  1320→3. **Share sheet read-only** — generate a public read-only URL for a sheet (read token with expiry)
+  1321→4. **Spaced repetition** — add a `next_review_at` field to questions; surface "due today" filter
+  1322→5. **Notes per question** — add an optional `notes` text field, with markdown rendering
+  1323→6. **Activity streak** — track daily solve counts, show a 30-day heatmap
+  1324→7. **OAuth** — Google login via `authlib`
+  1325→8. **Webhooks** — notify a Discord/Slack webhook when a sheet's solved % crosses a threshold
+  1326→
+  1327→---
+  1328→
+  1329→## 8. Reference Material
+  1330→
+  1331→- Current prototype (client-side): existing `leetcode-tracker.zip` — use its UI components as a starting point. Component files map 1:1 (just swap the data layer).
+  1332→- Sample CSV: `public/sample-leetcode.csv` — 665 real LeetCode questions, use for testing uploads
+  1333→- CSV format spec: see existing prototype's `lib/csv.ts` — exact same columns and validation rules
+  1334→- Theme tokens: see existing prototype's `globals.css` — copy verbatim
+  1335→
+  1336→---
+  1337→
+  1338→## 9. Build Order (recommended sequence)
+  1339→
+  1340→1. **Backend skeleton**: FastAPI app + MongoDB connection + `/health` endpoint. Verify Atlas connection.
+  1341→2. **Auth**: register/login/refresh/me/logout. Test with `httpie` or Postman. Get cookies right.
+  1342→3. **Sheets CRUD**: create/list/get/rename/delete. Add ownership checks.
+  1343→4. **CSV upload + replace**: the trickiest backend logic. Test with the sample CSV.
+  1344→5. **Questions list + filter + paginate**: build the query builder carefully, test all filter combinations.
+  1345→6. **Solved toggle**: PATCH endpoint.
+  1346→7. **Frontend skeleton**: Vite + React Router + AuthContext + axios client. Get login/register/dashboard flow working end-to-end.
+  1347→8. **Port UI components**: copy from existing prototype, swap `localStorage` calls for TanStack Query hooks.
+  1348→9. **Wire upload flow**: UploadDialog → `useUploadCsv` mutation.
+  1349→10. **Polish**: loading states, error toasts, mobile drawer, theme toggle.
+  1350→11. **Deploy**: Render (backend) → Vercel (frontend) → verify cross-origin cookies in production.
+  1351→12. **Tests**: write the pytest suite last, against the working backend.
+  1352→
+  1353→---
+  1354→
+  1355→**End of spec.** Hand this entire document to your AI coding assistant (Cursor, Claude, etc.) or to a human developer. The build should take roughly 2-3 focused days for an experienced full-stack dev, or 1-2 weeks for a junior dev.
+  1356→

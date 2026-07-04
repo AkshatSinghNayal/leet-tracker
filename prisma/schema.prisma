@@ -1,0 +1,57 @@
+// LeetCode Tracker — Prisma schema
+// Multi-user, per-user sheets, denormalized questions per sheet.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  hashedPassword String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sheets Sheet[]
+}
+
+model Sheet {
+  id        String     @id @default(cuid())
+  ownerId   String
+  name      String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  questions Question[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+model Question {
+  id           String   @id @default(cuid())
+  sheetId      String
+  ownerId      String
+  leetcodeId   Int
+  url          String
+  title        String
+  difficulty   String   // "Easy" | "Medium" | "Hard"
+  difficultyOrder Int   // 0=Easy, 1=Medium, 2=Hard (for sorting)
+  solved       Boolean  @default(false)
+  solvedAt     DateTime?
+  createdAt    DateTime @default(now())
+
+  sheet        Sheet    @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@unique([sheetId, leetcodeId])
+  @@index([sheetId, difficulty])
+  @@index([sheetId, solved])
+  @@index([ownerId])
+}
