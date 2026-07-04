@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Sheet as SheetPanel } from "@/components/ui/sheet";
 import { Header } from "./Header";
 import { SheetTabs } from "./SheetTabs";
 import { FiltersSidebar } from "./FiltersSidebar";
@@ -24,6 +23,7 @@ export function Dashboard() {
 
   const [searchInput, setSearchInput] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState<Set<"Easy" | "Medium" | "Hard">>(new Set());
+  const [primaryTopicFilter, setPrimaryTopicFilter] = useState<Set<string>>(new Set());
   const [solvedFilter, setSolvedFilter] = useState<"all" | "solved" | "unsolved">("all");
 
   const [sortBy, setSortBy] = useState<SortBy>("id");
@@ -31,15 +31,12 @@ export function Dashboard() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  // Auto-select the first sheet when sheets load — use a "selected once" guard
-  // to avoid cascading setState in effects. This is a derived value with a fallback.
+  // Auto-select the first sheet when sheets load
   const effectiveSheetId = useMemo(() => {
     if (sheetsLoading || sheets.length === 0) return null;
     if (activeSheetId && sheets.find((s) => s.id === activeSheetId)) return activeSheetId;
     return sheets[0].id;
   }, [sheets, sheetsLoading, activeSheetId]);
-
-  // Reset page when filters change — handled inline in setters below (no effects).
 
   // Debounce the search input
   const debouncedSearch = useDebounce(searchInput, 300);
@@ -47,8 +44,9 @@ export function Dashboard() {
   const filters: Filters = useMemo(() => ({
     search: debouncedSearch,
     difficulty: difficultyFilter,
+    primaryTopic: primaryTopicFilter,
     solved: solvedFilter,
-  }), [debouncedSearch, difficultyFilter, solvedFilter]);
+  }), [debouncedSearch, difficultyFilter, primaryTopicFilter, solvedFilter]);
 
   // Build the query string
   const queryStr = useMemo(() => {
@@ -60,9 +58,10 @@ export function Dashboard() {
     };
     if (debouncedSearch) params.search = debouncedSearch;
     if (difficultyFilter.size > 0) params.difficulty = Array.from(difficultyFilter).join(",");
+    if (primaryTopicFilter.size > 0) params.primary_topic = Array.from(primaryTopicFilter).join(",");
     if (solvedFilter !== "all") params.solved = solvedFilter;
     return params;
-  }, [debouncedSearch, difficultyFilter, solvedFilter, sortBy, sortDir, page, pageSize]);
+  }, [debouncedSearch, difficultyFilter, primaryTopicFilter, solvedFilter, sortBy, sortDir, page, pageSize]);
 
   const { data, isLoading: questionsLoading, isFetching } = useQuery<QuestionsResponse>({
     queryKey: ["questions", effectiveSheetId, queryStr],
@@ -71,9 +70,15 @@ export function Dashboard() {
   });
 
   // Wrap filter setters to also reset page
-  const updateFilters = useCallback((partial: Partial<{ search: string; difficulty: Set<"Easy" | "Medium" | "Hard">; solved: "all" | "solved" | "unsolved" }>) => {
+  const updateFilters = useCallback((partial: Partial<{
+    search: string;
+    difficulty: Set<"Easy" | "Medium" | "Hard">;
+    primaryTopic: Set<string>;
+    solved: "all" | "solved" | "unsolved";
+  }>) => {
     if ("search" in partial) setSearchInput(partial.search ?? "");
     if ("difficulty" in partial) setDifficultyFilter(partial.difficulty ?? new Set());
+    if ("primaryTopic" in partial) setPrimaryTopicFilter(partial.primaryTopic ?? new Set());
     if ("solved" in partial) setSolvedFilter(partial.solved ?? "all");
     setPage(1);
   }, []);
@@ -86,6 +91,8 @@ export function Dashboard() {
 
   const onSelectSheet = useCallback((id: string) => {
     setActiveSheetId(id);
+    // When switching sheets, clear primaryTopic filter (topics are per-sheet) + reset page
+    setPrimaryTopicFilter(new Set());
     setPage(1);
   }, []);
 
@@ -93,6 +100,13 @@ export function Dashboard() {
     setPageSize(s);
     setPage(1);
   }, []);
+
+  const availableTopics = data?.primary_topics ?? [];
+  const activeFilterCount =
+    (searchInput ? 1 : 0) +
+    difficultyFilter.size +
+    primaryTopicFilter.size +
+    (solvedFilter !== "all" ? 1 : 0);
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
@@ -116,12 +130,13 @@ export function Dashboard() {
 
             <div className="flex flex-col lg:flex-row gap-4">
               {/* Desktop sidebar */}
-              <div className="hidden lg:block w-60 shrink-0">
+              <div className="hidden lg:block w-64 shrink-0">
                 <FiltersSidebar
                   filters={filters}
-                  onChange={(f) => updateFilters({ search: f.search, difficulty: f.difficulty, solved: f.solved })}
+                  onChange={(f) => updateFilters({ search: f.search, difficulty: f.difficulty, primaryTopic: f.primaryTopic, solved: f.solved })}
                   total={data?.total ?? 0}
-                  className="rounded-md border border-border bg-card p-4"
+                  availableTopics={availableTopics}
+                  className="rounded-md border border-border bg-card p-4 max-h-[calc(100vh-200px)] overflow-y-auto"
                 />
               </div>
 
@@ -135,9 +150,9 @@ export function Dashboard() {
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5" />
                   Filters
-                  {(searchInput || difficultyFilter.size > 0 || solvedFilter !== "all") && (
+                  {activeFilterCount > 0 && (
                     <span className="ml-1 rounded-full bg-foreground text-background text-[10px] px-1.5 py-0.5 leading-none">
-                      {(searchInput ? 1 : 0) + difficultyFilter.size + (solvedFilter !== "all" ? 1 : 0)}
+                      {activeFilterCount}
                     </span>
                   )}
                 </Button>
@@ -155,18 +170,17 @@ export function Dashboard() {
                     </div>
                     <FiltersSidebar
                       filters={filters}
-                      onChange={(f) => updateFilters({ search: f.search, difficulty: f.difficulty, solved: f.solved })}
+                      onChange={(f) => updateFilters({ search: f.search, difficulty: f.difficulty, primaryTopic: f.primaryTopic, solved: f.solved })}
                       total={data?.total ?? 0}
+                      availableTopics={availableTopics}
                     />
                   </div>
                 </div>
               )}
-              {/* SheetPanel is imported but not used for filters anymore — keep ref to avoid unused import */}
-              <div className="hidden">{SheetPanel ? "" : ""}</div>
 
               {/* Main column */}
               <div className="flex-1 min-w-0 space-y-3">
-                <ActiveFilters filters={filters} onChange={(f) => updateFilters({ search: f.search, difficulty: f.difficulty, solved: f.solved })} />
+                <ActiveFilters filters={filters} onChange={(f) => updateFilters({ search: f.search, difficulty: f.difficulty, primaryTopic: f.primaryTopic, solved: f.solved })} />
 
                 <div className="relative">
                   <QuestionTable
@@ -194,7 +208,7 @@ export function Dashboard() {
       </main>
 
       <footer className="px-4 sm:px-6 py-4 border-t border-border text-xs text-muted-foreground text-center mt-auto">
-        LeetCode Tracker · Per-user sheets · JWT auth · {sheets.length} sheet{sheets.length === 1 ? "" : "s"}
+        LeetCode Tracker · Per-user sheets · Global solved sync · JWT auth · {sheets.length} sheet{sheets.length === 1 ? "" : "s"}
       </footer>
     </div>
   );

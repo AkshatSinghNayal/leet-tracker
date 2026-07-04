@@ -1,0 +1,80 @@
+// PostgreSQL variant of the Prisma schema — for Vercel / Neon / Supabase / Render Postgres.
+//
+// To use this:
+//   1. Copy this file over prisma/schema.prisma:
+//        cp prisma/schema.postgres.prisma prisma/schema.prisma
+//   2. Set DATABASE_URL to your Postgres connection string in .env or your host's dashboard.
+//   3. Run `bun run db:push` to create tables.
+//
+// All model definitions are identical to the SQLite variant — only the datasource provider changes.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  hashedPassword String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sheets          Sheet[]
+  solvedQuestions SolvedQuestion[]
+}
+
+model Sheet {
+  id        String     @id @default(cuid())
+  ownerId   String
+  name      String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  questions Question[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+model Question {
+  id              String   @id @default(cuid())
+  sheetId         String
+  ownerId         String
+  leetcodeId      Int
+  url             String
+  title           String
+  difficulty      String
+  difficultyOrder Int
+  primaryTopic    String   @default("Uncategorized")
+  solved          Boolean  @default(false)
+  solvedAt        DateTime?
+  createdAt       DateTime @default(now())
+
+  sheet           Sheet    @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@unique([sheetId, leetcodeId])
+  @@index([sheetId, difficulty])
+  @@index([sheetId, primaryTopic])
+  @@index([sheetId, solved])
+  @@index([ownerId])
+  @@index([ownerId, leetcodeId])
+}
+
+model SolvedQuestion {
+  id         String   @id @default(cuid())
+  ownerId    String
+  leetcodeId Int
+  solvedAt   DateTime @default(now())
+
+  owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, leetcodeId])
+  @@index([ownerId])
+}

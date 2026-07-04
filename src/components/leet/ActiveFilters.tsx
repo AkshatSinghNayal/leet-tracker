@@ -15,17 +15,27 @@ export function ActiveFilters({ filters, onChange, className }: Props) {
 
   if (filters.search) {
     chips.push({
-      label: `Search: "${filters.search}"`,
+      label: `Title: "${filters.search}"`,
       clear: () => onChange({ ...filters, search: "" }),
     });
   }
   for (const d of Array.from(filters.difficulty)) {
     chips.push({
-      label: d,
+      label: `Level: ${d}`,
       clear: () => {
         const next = new Set(filters.difficulty);
         next.delete(d as "Easy" | "Medium" | "Hard");
         onChange({ ...filters, difficulty: next });
+      },
+    });
+  }
+  for (const t of Array.from(filters.primaryTopic)) {
+    chips.push({
+      label: `Topic: ${t}`,
+      clear: () => {
+        const next = new Set(filters.primaryTopic);
+        next.delete(t);
+        onChange({ ...filters, primaryTopic: next });
       },
     });
   }

@@ -50,12 +50,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
     return Response.json({ detail: "No valid rows in CSV" }, { status: 400 });
   }
 
-  // Get currently-solved leetcode_ids in this sheet (to preserve across replace)
-  const existingSolved = await db.question.findMany({
-    where: { sheetId, solved: true },
+  // Use the GLOBAL SolvedQuestion table to determine solved state.
+  // This means: if a user has solved leetcode_id=139 in ANY sheet, uploading
+  // a new CSV containing leetcode_id=139 will mark it as solved in this sheet too.
+  const globallySolved = await db.solvedQuestion.findMany({
+    where: { ownerId: user.id, leetcodeId: { in: parsed.questions.map((q) => q.leetcodeId) } },
     select: { leetcodeId: true },
   });
-  const solvedSet = new Set(existingSolved.map((q) => q.leetcodeId));
+  const solvedSet = new Set(globallySolved.map((q) => q.leetcodeId));
 
   // Atomic-ish replace: delete all, then insert all (transaction)
   await db.$transaction([

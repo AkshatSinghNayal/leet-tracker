@@ -167,6 +167,7 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
   const [alias, setAlias] = useState("");
   const [mode, setMode] = useState<"create" | "replace">("create");
   const [targetSheetId, setTargetSheetId] = useState<string>("");
+  const [preview, setPreview] = useState<{ valid: number; skipped: number; sample: { leetcodeId: number; title: string; difficulty: string; primaryTopic: string }[]; hasPrimaryTopic: boolean } | null>(null);
   const uploadMut = useUploadCsv();
   const { data: sheets = [] } = useSheets();
   const createMut = useCreateSheet();
@@ -177,14 +178,23 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
     setAlias("");
     setMode("create");
     setTargetSheetId("");
+    setPreview(null);
   };
 
-  const handlePick = (f: File | null) => {
+  const handlePick = async (f: File | null) => {
     if (!f) return;
     setFile(f);
     // Derive alias from filename (without extension)
     const base = f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
     setAlias(base || "New Sheet");
+    // Parse preview
+    try {
+      const text = await f.text();
+      const p = parseLeetcodeCsvClient(text);
+      setPreview(p);
+    } catch {
+      setPreview(null);
+    }
     setStep("configure");
   };
 
@@ -196,9 +206,9 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
         if (!trimmed) { toast.error("Sheet name required"); return; }
         // Validate CSV format client-side first
         const text = await file.text();
-        const preview = parseLeetcodeCsvClient(text);
-        if (preview.error) { toast.error(preview.error); return; }
-        if (preview.valid === 0) { toast.error("No valid rows in CSV"); return; }
+        const p = parseLeetcodeCsvClient(text);
+        if (p.error) { toast.error(p.error); return; }
+        if (p.valid === 0) { toast.error("No valid rows in CSV"); return; }
         // Create sheet first
         const created = await createMut.mutateAsync(trimmed);
         // Then upload
@@ -207,7 +217,7 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
       } else {
         if (!targetSheetId) { toast.error("Select a sheet to replace"); return; }
         const result = await uploadMut.mutateAsync({ sheetId: targetSheetId, file });
-        toast.success(`Replaced with ${result.imported} questions. Preserved ${result.preserved_solved} solved.`);
+        toast.success(`Replaced with ${result.imported} questions. ${result.preserved_solved} carried over from global solved.`);
       }
       onOpenChange(false);
       reset();
@@ -227,7 +237,9 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
         <DialogHeader>
           <DialogTitle>Upload CSV</DialogTitle>
           <DialogDescription>
-            CSV must have these headers: <code className="text-xs bg-muted px-1 py-0.5 rounded">ID, URL, Title, Difficulty</code>
+            Two formats supported:<br />
+            <code className="text-xs bg-muted px-1 py-0.5 rounded">ID, URL, Title, Difficulty</code> or{" "}
+            <code className="text-xs bg-muted px-1 py-0.5 rounded">ID, title, url, level, primary_topic</code>
           </DialogDescription>
         </DialogHeader>
 
@@ -255,6 +267,41 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
               File: <span className="text-foreground font-medium">{file?.name}</span>
             </div>
 
+            {preview && (
+              <div className={`rounded-md border p-3 text-xs ${preview.error ? "border-destructive/40 bg-destructive/5" : "border-border bg-muted/30"}`}>
+                {preview.error ? (
+                  <div className="text-destructive">{preview.error}</div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <span className="font-medium text-foreground">{preview.valid}</span>
+                      <span className="text-muted-foreground">valid rows</span>
+                      {preview.skipped > 0 && (
+                        <>
+                          <span className="font-medium text-foreground">{preview.skipped}</span>
+                          <span className="text-muted-foreground">skipped</span>
+                        </>
+                      )}
+                    </div>
+                    {preview.hasPrimaryTopic && (
+                      <div className="mt-1 text-emerald-600 dark:text-emerald-400">✓ primary_topic detected</div>
+                    )}
+                    {preview.sample.length > 0 && (
+                      <div className="mt-2 space-y-0.5">
+                        {preview.sample.map((s) => (
+                          <div key={s.leetcodeId} className="truncate text-muted-foreground">
+                            <span className="text-foreground">#{s.leetcodeId}</span>{" "}
+                            {s.title}{" "}
+                            <span className="opacity-60">({s.difficulty}{preview.hasPrimaryTopic ? `, ${s.primaryTopic}` : ""})</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
               <div className="text-sm font-medium">Mode</div>
               <div className="grid grid-cols-2 gap-2">
@@ -276,7 +323,7 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
                   }`}
                 >
                   <div className="font-medium">Replace existing</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">Keeps solved state for matching IDs</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">Keeps global solved state</div>
                 </button>
               </div>
             </div>
@@ -302,15 +349,20 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
                 </select>
                 {targetSheetId && (
                   <p className="text-xs text-muted-foreground">
-                    Existing solved questions matching the CSV&apos;s IDs will keep their solved state.
+                    Questions matching your global solved IDs will be marked solved automatically.
                   </p>
                 )}
               </div>
             )}
 
+            <div className="rounded-md border border-border bg-muted/20 p-2.5 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Global solved sync:</span>{" "}
+              Marking a question solved in any sheet also marks it solved in every other sheet with the same LeetCode ID.
+            </div>
+
             <DialogFooter>
               <Button variant="ghost" onClick={() => setStep("pick")}>Back</Button>
-              <Button onClick={handleConfirm} disabled={uploadMut.isPending || createMut.isPending}>
+              <Button onClick={handleConfirm} disabled={uploadMut.isPending || createMut.isPending || !!preview?.error}>
                 {(uploadMut.isPending || createMut.isPending) ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
                 {mode === "create" ? "Create & Upload" : "Replace"}
               </Button>

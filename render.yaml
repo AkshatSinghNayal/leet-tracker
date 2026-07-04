@@ -1,0 +1,44 @@
+# Render Blueprint — deploy LeetCode Tracker to Render
+#
+# Usage:
+#   1. Push this repo to GitHub/GitLab
+#   2. In Render dashboard → New → Blueprint → pick this repo
+#   3. Render will detect render.yaml and create the service for you
+#   4. Set the following env vars in the Render dashboard (or via render.yaml keys):
+#        - JWT_SECRET_KEY (REQUIRED — generate with `openssl rand -hex 32`)
+#        - COOKIE_SECURE=true
+#        - COOKIE_SAMESITE=none (or lax — depends on your frontend origin)
+#   5. The SQLite database is stored on a persistent disk (1 GB free tier eligible)
+
+services:
+  - type: web
+    name: leetcode-tracker
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        value: file:/data/app.db
+      - key: JWT_SECRET_KEY
+        sync: false  # set this in the Render dashboard (REQUIRED)
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "15"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: "none"  # use "lax" if frontend is same-origin
+      - key: MAX_CSV_SIZE_BYTES
+        value: "5242880"
+      - key: NODE_ENV
+        value: production
+    disk:
+      name: leetcode-tracker-data
+      mountPath: /data
+      sizeGB: 1  # free tier eligible

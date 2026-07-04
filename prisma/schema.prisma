@@ -18,7 +18,8 @@ model User {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  sheets Sheet[]
+  sheets          Sheet[]
+  solvedQuestions SolvedQuestion[]
 }
 
 model Sheet {
@@ -55,5 +56,22 @@ model Question {
   @@index([sheetId, difficulty])
   @@index([sheetId, primaryTopic])
   @@index([sheetId, solved])
+  @@index([ownerId])
+  @@index([ownerId, leetcodeId])
+}
+
+// Global solved state per (user, leetcodeId). When a user marks a question as
+// solved in any sheet, this is upserted. All Question rows for the same
+// (ownerId, leetcodeId) are kept in sync — so solving in one sheet marks it
+// solved in every sheet that contains that leetcode_id.
+model SolvedQuestion {
+  id          String   @id @default(cuid())
+  ownerId     String
+  leetcodeId  Int
+  solvedAt    DateTime @default(now())
+
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, leetcodeId])
   @@index([ownerId])
 }

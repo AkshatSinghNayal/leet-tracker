@@ -23,6 +23,8 @@ import { cn } from "@/lib/utils";
 import type { QuestionsResponse, SortBy, SortDir } from "@/lib/leet/types";
 import { DifficultyBadge } from "./DifficultyBadge";
 import { useToggleSolved } from "@/hooks/useSheets";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 interface Props {
   sheetId: string;
@@ -41,12 +43,15 @@ export function QuestionTable({
   sheetId, data, isLoading, sortBy, sortDir, onSortChange, page, pageSize, onPageChange, onPageSizeChange,
 }: Props) {
   const toggleMut = useToggleSolved(sheetId);
+  const qc = useQueryClient();
 
-  const headers: Array<{ key: SortBy | "status"; label: string; sortable: boolean; className?: string }> = [
+  const headers: Array<{ key: SortBy | "status" | "actions"; label: string; sortable: boolean; className?: string }> = [
     { key: "status", label: "✓", sortable: false, className: "w-10" },
     { key: "id", label: "#", sortable: true, className: "w-16 tabular-nums" },
     { key: "title", label: "Title", sortable: true },
-    { key: "difficulty", label: "Difficulty", sortable: true, className: "w-28" },
+    { key: "difficulty", label: "Level", sortable: true, className: "w-24" },
+    { key: "primary_topic", label: "Topic", sortable: true, className: "w-44" },
+    { key: "actions", label: "", sortable: false, className: "w-10" },
   ];
 
   const onSortClick = (key: SortBy) => {
@@ -54,6 +59,26 @@ export function QuestionTable({
       onSortChange(key, sortDir === "asc" ? "desc" : "asc");
     } else {
       onSortChange(key, "asc");
+    }
+  };
+
+  const handleToggle = async (questionId: string, leetcodeId: number, currentSolved: boolean) => {
+    const newSolved = !currentSolved;
+    try {
+      const result = await toggleMut.mutateAsync({ questionId, solved: newSolved });
+      // Invalidate all queries — global solved sync means other sheets may have changed too
+      qc.invalidateQueries({ queryKey: ["questions"] });
+      qc.invalidateQueries({ queryKey: ["sheets"] });
+      if (result.propagated) {
+        toast.info(
+          newSolved
+            ? `Marked solved across all sheets (LeetCode #${leetcodeId}).`
+            : `Marked unsolved across all sheets (LeetCode #${leetcodeId}).`,
+          { duration: 2500 }
+        );
+      }
+    } catch (e) {
+      toast.error((e as Error).message || "Failed to toggle");
     }
   };
 
@@ -82,19 +107,18 @@ export function QuestionTable({
                   )}
                 </TableHead>
               ))}
-              <TableHead className="w-10 text-xs font-medium text-muted-foreground" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               Array.from({ length: 10 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={5}><Skeleton className="h-5 w-full" /></TableCell>
+                  <TableCell colSpan={6}><Skeleton className="h-5 w-full" /></TableCell>
                 </TableRow>
               ))
             ) : !data || data.questions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-12">
+                <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-12">
                   No questions match your filters.
                 </TableCell>
               </TableRow>
@@ -110,10 +134,7 @@ export function QuestionTable({
                   <TableCell>
                     <Checkbox
                       checked={q.solved}
-                      onCheckedChange={(v) => {
-                        toggleMut.mutate({ questionId: q.id, solved: v === true });
-                        // Optimistic: mutate hook already invalidates on success
-                      }}
+                      onCheckedChange={() => handleToggle(q.id, q.leetcode_id, q.solved)}
                       aria-label={`Mark ${q.title} as ${q.solved ? "unsolved" : "solved"}`}
                       disabled={toggleMut.isPending}
                     />
@@ -134,6 +155,15 @@ export function QuestionTable({
                     </a>
                   </TableCell>
                   <TableCell><DifficultyBadge difficulty={q.difficulty} /></TableCell>
+                  <TableCell>
+                    {q.primary_topic && q.primary_topic !== "Uncategorized" ? (
+                      <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-xs text-muted-foreground">
+                        {q.primary_topic}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/50">—</span>
+                    )}
+                  </TableCell>
                   <TableCell />
                 </TableRow>
               ))

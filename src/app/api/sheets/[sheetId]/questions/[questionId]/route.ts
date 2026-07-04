@@ -19,19 +19,39 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sh
     return Response.json({ detail: "Invalid JSON" }, { status: 422 });
   }
 
-  const existing = await db.question.findFirst({ where: { id: questionId, sheetId, ownerId: user.id } });
-  if (!existing) return notFound("Question not found");
+  const target = await db.question.findFirst({ where: { id: questionId, sheetId, ownerId: user.id } });
+  if (!target) return notFound("Question not found");
 
-  const data: { solved?: boolean; solvedAt?: Date | null } = {};
   if (typeof body.solved === "boolean") {
-    data.solved = body.solved;
-    data.solvedAt = body.solved ? new Date() : null;
+    const now = new Date();
+    if (body.solved) {
+      // 1. Upsert into global SolvedQuestion
+      await db.solvedQuestion.upsert({
+        where: { ownerId_leetcodeId: { ownerId: user.id, leetcodeId: target.leetcodeId } },
+        update: { solvedAt: now },
+        create: { ownerId: user.id, leetcodeId: target.leetcodeId, solvedAt: now },
+      });
+      // 2. Propagate to ALL Question rows for this user with the same leetcodeId
+      await db.question.updateMany({
+        where: { ownerId: user.id, leetcodeId: target.leetcodeId },
+        data: { solved: true, solvedAt: now },
+      });
+    } else {
+      // 1. Delete from global SolvedQuestion
+      await db.solvedQuestion.deleteMany({
+        where: { ownerId: user.id, leetcodeId: target.leetcodeId },
+      });
+      // 2. Propagate to ALL Question rows
+      await db.question.updateMany({
+        where: { ownerId: user.id, leetcodeId: target.leetcodeId },
+        data: { solved: false, solvedAt: null },
+      });
+    }
   }
 
-  const question = await db.question.update({
-    where: { id: questionId },
-    data,
-  });
+  // Re-fetch the target question (with updated solved state)
+  const question = await db.question.findUnique({ where: { id: questionId } });
+  if (!question) return notFound("Question not found");
 
   return Response.json({
     question: {
@@ -44,6 +64,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sh
       solved: question.solved,
       solved_at: question.solvedAt,
     },
+    // Hint to the client that other sheets may have been updated
+    propagated: true,
+    leetcode_id: question.leetcodeId,
   });
 }
 
