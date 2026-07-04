@@ -4,11 +4,12 @@
 #   1. Push this repo to GitHub/GitLab
 #   2. In Render dashboard → New → Blueprint → pick this repo
 #   3. Render will detect render.yaml and create the service for you
-#   4. Set the following env vars in the Render dashboard (or via render.yaml keys):
+#   4. Set the following env vars in the Render dashboard:
 #        - JWT_SECRET_KEY (REQUIRED — generate with `openssl rand -hex 32`)
-#        - COOKIE_SECURE=true
-#        - COOKIE_SAMESITE=none (or lax — depends on your frontend origin)
-#   5. The SQLite database is stored on a persistent disk (1 GB free tier eligible)
+#        - DATABASE_URL  (REQUIRED — your Neon/Supabase/Postgres connection string)
+#
+# Note: Persistent disks are not available on Render free tier.
+# This config uses an external PostgreSQL database (e.g. Neon) instead of SQLite.
 
 services:
   - type: web
@@ -21,7 +22,7 @@ services:
     autoDeploy: true
     envVars:
       - key: DATABASE_URL
-        value: file:/data/app.db
+        sync: false  # set this in the Render dashboard — your Postgres connection string (REQUIRED)
       - key: JWT_SECRET_KEY
         sync: false  # set this in the Render dashboard (REQUIRED)
       - key: JWT_ALGORITHM
@@ -33,12 +34,8 @@ services:
       - key: COOKIE_SECURE
         value: "true"
       - key: COOKIE_SAMESITE
-        value: "none"  # use "lax" if frontend is same-origin
+        value: "lax"
       - key: MAX_CSV_SIZE_BYTES
         value: "5242880"
       - key: NODE_ENV
         value: production
-    disk:
-      name: leetcode-tracker-data
-      mountPath: /data
-      sizeGB: 1  # free tier eligible
