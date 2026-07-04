@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "LeetCode Tracker — Multi-user sheet tracker",
   description: "Track your LeetCode practice across multiple sheets. CSV upload, per-user progress, filters, sorting, and pagination.",
-  icons: { icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg" },
+  icons: { icon: "/logo.svg" },
 };
 
 export default function RootLayout({
