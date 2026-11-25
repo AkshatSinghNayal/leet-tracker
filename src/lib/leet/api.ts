@@ -141,6 +141,12 @@ export const sheetsApi = {
   remove: (id: string) => apiJson<{ ok: true }>(`/api/sheets/${id}`, { method: "DELETE" }),
   questions: (sheetId: string, query: Record<string, string>) =>
     apiJson<QuestionsResponse>(`/api/sheets/${sheetId}/questions?${new URLSearchParams(query)}`),
+  randomQuestion: (sheetId: string, query: Record<string, string>, excludeId?: string) => {
+    const params = new URLSearchParams(query);
+    params.set("random", "1");
+    if (excludeId) params.set("exclude_id", excludeId);
+    return apiJson<{ question: Question | null }>(`/api/sheets/${sheetId}/questions?${params}`);
+  },
   upload: (sheetId: string, file: File) => {
     const fd = new FormData();
     fd.append("file", file);

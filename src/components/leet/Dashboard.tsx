@@ -296,6 +296,7 @@ export function Dashboard() {
                 <div className="relative">
                   <QuestionTable
                     sheetId={effectiveSheetId}
+                    queryStr={queryStr}
                     data={data ?? null}
                     isLoading={questionsLoading}
                     sortBy={sortBy}

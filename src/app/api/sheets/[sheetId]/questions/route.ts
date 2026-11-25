@@ -52,7 +52,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
   const sheet = await db.sheet.findFirst({ where: { id: sheetId, ownerId: user.id } });
   if (!sheet) return notFound("Sheet not found");
 
-  const q = parseQuery(new URL(req.url));
+  const url = new URL(req.url);
+  const q = parseQuery(url);
 
   const where: Record<string, unknown> = { sheetId, ownerId: user.id };
   if (q.search) {
@@ -66,6 +67,61 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
   }
   if (q.solved === "solved") where.solved = true;
   else if (q.solved === "unsolved") where.solved = false;
+
+  if (url.searchParams.get("random") === "1") {
+    if (q.solved === "solved") {
+      return Response.json({ question: null });
+    }
+    const baseUnsolvedWhere: Record<string, unknown> = { ...where, solved: false };
+    const excludeId = url.searchParams.get("exclude_id")?.trim();
+    let targetWhere = baseUnsolvedWhere;
+    let count = 0;
+
+    if (excludeId) {
+      const excludingWhere = { ...baseUnsolvedWhere, id: { not: excludeId } };
+      count = await db.question.count({ where: excludingWhere });
+      if (count > 0) targetWhere = excludingWhere;
+    }
+    if (count === 0) {
+      count = await db.question.count({ where: baseUnsolvedWhere });
+      targetWhere = baseUnsolvedWhere;
+    }
+    if (count === 0) {
+      return Response.json({ question: null });
+    }
+
+    const skip = Math.floor(Math.random() * count);
+    const picked = await db.question.findFirst({
+      where: targetWhere,
+      orderBy: { id: "asc" },
+      skip,
+      select: {
+        id: true,
+        leetcodeId: true,
+        url: true,
+        title: true,
+        difficulty: true,
+        primaryTopic: true,
+        solved: true,
+        solvedAt: true,
+      },
+    });
+
+    return Response.json({
+      question: picked
+        ? {
+            id: picked.id,
+            leetcode_id: picked.leetcodeId,
+            url: picked.url,
+            title: picked.title,
+            difficulty: picked.difficulty,
+            primary_topic: picked.primaryTopic,
+            solved: picked.solved,
+            solved_at: picked.solvedAt,
+          }
+        : null,
+    });
+  }
 
   // Sort field mapping
   const sortField = q.sort_by;

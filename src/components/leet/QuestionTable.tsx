@@ -1,7 +1,18 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
-import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Eye, EyeOff } from "lucide-react";
+import { useMemo, useState, useSyncExternalStore } from "react";
+import {
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+  Check,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Loader2,
+  Shuffle,
+  X,
+} from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +32,8 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type { QuestionsResponse, SortBy, SortDir } from "@/lib/leet/types";
+import { sheetsApi } from "@/lib/leet/api";
+import type { Question, QuestionsResponse, SortBy, SortDir } from "@/lib/leet/types";
 import { DifficultyBadge } from "./DifficultyBadge";
 import { useToggleSolved } from "@/hooks/useSheets";
 import { toast } from "sonner";
@@ -58,6 +70,7 @@ function getColumnVisibilityServerSnapshot() {
 
 interface Props {
   sheetId: string;
+  queryStr: Record<string, string>;
   data: QuestionsResponse | null;
   isLoading: boolean;
   sortBy: SortBy;
@@ -70,9 +83,14 @@ interface Props {
 }
 
 export function QuestionTable({
-  sheetId, data, isLoading, sortBy, sortDir, onSortChange, page, pageSize, onPageChange, onPageSizeChange,
+  sheetId, queryStr, data, isLoading, sortBy, sortDir, onSortChange, page, pageSize, onPageChange, onPageSizeChange,
 }: Props) {
   const toggleMut = useToggleSolved(sheetId);
+  const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
+  const [pickingRandom, setPickingRandom] = useState(false);
+  const [pickedState, setPickedState] = useState<{ sheetId: string; question: Question } | null>(null);
+  const pickedQuestion = pickedState?.sheetId === sheetId ? pickedState.question : null;
+
   const rawColumns = useSyncExternalStore(
     subscribeColumnVisibility,
     getColumnVisibilitySnapshot,
@@ -101,13 +119,12 @@ export function QuestionTable({
     }
   };
 
-  const headers: Array<{ key: SortBy | "status" | "actions"; label: string; sortable: boolean; className?: string }> = [
+  const headers: Array<{ key: SortBy | "status"; label: string; sortable: boolean; className?: string }> = [
     { key: "status", label: "✓", sortable: false, className: "w-10" },
     { key: "id", label: "#", sortable: true, className: "w-16 tabular-nums" },
     { key: "title", label: "Title", sortable: true },
     ...(columns.level ? [{ key: "difficulty" as const, label: "Level", sortable: true, className: "w-24" }] : []),
     ...(columns.topic ? [{ key: "primary_topic" as const, label: "Topic", sortable: true, className: "w-44" }] : []),
-    { key: "actions", label: "", sortable: false, className: "w-10" },
   ];
 
   const onSortClick = (key: SortBy) => {
@@ -119,7 +136,16 @@ export function QuestionTable({
   };
 
   const handleToggle = async (questionId: string, leetcodeId: number, currentSolved: boolean) => {
+    if (pendingIds.has(questionId)) return;
     const newSolved = !currentSolved;
+    setPendingIds((prev) => {
+      const next = new Set(prev);
+      next.add(questionId);
+      return next;
+    });
+    if (pickedQuestion?.id === questionId) {
+      setPickedState({ sheetId, question: { ...pickedQuestion, solved: newSolved } });
+    }
     try {
       const result = await toggleMut.mutateAsync({ questionId, solved: newSolved });
       if (result.propagated) {
@@ -127,22 +153,60 @@ export function QuestionTable({
           newSolved
             ? `Marked solved across all synced sheets (LeetCode #${leetcodeId}).`
             : `Marked unsolved across all synced sheets (LeetCode #${leetcodeId}).`,
-          { duration: 2500 }
+          { duration: 2000 }
         );
       }
     } catch (e) {
+      if (pickedQuestion?.id === questionId) {
+        setPickedState({ sheetId, question: { ...pickedQuestion, solved: currentSolved } });
+      }
       toast.error((e as Error).message || "Failed to toggle");
+    } finally {
+      setPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(questionId);
+        return next;
+      });
+    }
+  };
+
+  const handlePickRandom = async () => {
+    if (pickingRandom) return;
+    setPickingRandom(true);
+    try {
+      const res = await sheetsApi.randomQuestion(sheetId, queryStr, pickedQuestion?.id);
+      if (!res.question) {
+        toast.info("No unsolved questions match your current filters.");
+        return;
+      }
+      setPickedState({ sheetId, question: res.question });
+    } catch (e) {
+      toast.error((e as Error).message || "Failed to pick a random question");
+    } finally {
+      setPickingRandom(false);
     }
   };
 
   return (
     <div className="rounded-md border border-border overflow-hidden bg-card">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/20">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/20">
         <span className="text-xs text-muted-foreground">
           {data ? `${data.total.toLocaleString()} question${data.total === 1 ? "" : "s"}` : "Questions"}
         </span>
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-muted-foreground mr-0.5 hidden sm:inline">Columns:</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5 text-xs gap-1.5"
+            onClick={handlePickRandom}
+            disabled={pickingRandom || isLoading || !data || data.total === 0}
+            title="Pick a random unsolved question matching current filters"
+          >
+            {pickingRandom ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shuffle className="w-3 h-3" />}
+            Pick Random
+          </Button>
+          <span className="text-xs text-muted-foreground mx-0.5 hidden sm:inline">· Columns:</span>
           <Button
             type="button"
             variant={columns.level ? "secondary" : "outline"}
@@ -167,6 +231,74 @@ export function QuestionTable({
           </Button>
         </div>
       </div>
+
+      {pickedQuestion && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5 border-b border-border bg-primary/5">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <span className="inline-flex items-center gap-1 rounded bg-foreground/10 px-1.5 py-0.5 text-[11px] font-medium text-foreground">
+              <Shuffle className="w-3 h-3" />
+              Random Pick
+            </span>
+            <span className="text-xs text-muted-foreground tabular-nums">#{pickedQuestion.leetcode_id}</span>
+            <a
+              href={pickedQuestion.url}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(
+                "text-sm font-medium hover:underline inline-flex items-center gap-1 truncate",
+                pickedQuestion.solved && "line-through opacity-60"
+              )}
+            >
+              <span>{pickedQuestion.title}</span>
+              <ExternalLink className="w-3 h-3 shrink-0 text-muted-foreground" />
+            </a>
+            <DifficultyBadge difficulty={pickedQuestion.difficulty} />
+            {pickedQuestion.primary_topic && pickedQuestion.primary_topic !== "Uncategorized" && (
+              <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-xs text-muted-foreground">
+                {pickedQuestion.primary_topic}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Button asChild size="sm" variant="default" className="h-7 px-2.5 text-xs gap-1">
+              <a href={pickedQuestion.url} target="_blank" rel="noreferrer">
+                Solve <ExternalLink className="w-3 h-3" />
+              </a>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={pickedQuestion.solved ? "secondary" : "outline"}
+              className="h-7 px-2.5 text-xs gap-1"
+              disabled={pendingIds.has(pickedQuestion.id)}
+              onClick={() => handleToggle(pickedQuestion.id, pickedQuestion.leetcode_id, pickedQuestion.solved)}
+            >
+              <Check className="w-3 h-3" />
+              {pickedQuestion.solved ? "Solved" : "Mark Solved"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs gap-1"
+              disabled={pickingRandom}
+              onClick={handlePickRandom}
+              title="Pick another random unsolved question"
+            >
+              {pickingRandom ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shuffle className="w-3 h-3" />}
+              Reroll
+            </Button>
+            <button
+              type="button"
+              onClick={() => setPickedState(null)}
+              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+              aria-label="Dismiss random pick"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <Table>
@@ -212,7 +344,8 @@ export function QuestionTable({
                   key={q.id}
                   className={cn(
                     "group",
-                    q.solved && "opacity-60"
+                    q.solved && "opacity-60",
+                    pickedQuestion?.id === q.id && "bg-primary/5"
                   )}
                 >
                   <TableCell>
@@ -220,7 +353,7 @@ export function QuestionTable({
                       checked={q.solved}
                       onCheckedChange={() => handleToggle(q.id, q.leetcode_id, q.solved)}
                       aria-label={`Mark ${q.title} as ${q.solved ? "unsolved" : "solved"}`}
-                      disabled={toggleMut.isPending}
+                      disabled={pendingIds.has(q.id)}
                     />
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground tabular-nums">{q.leetcode_id}</TableCell>
@@ -252,7 +385,6 @@ export function QuestionTable({
                       )}
                     </TableCell>
                   )}
-                  <TableCell />
                 </TableRow>
               ))
             )}
