@@ -146,10 +146,10 @@ export function LeetCodeSyncDialog({ open, onOpenChange }: Props) {
         onOpenChange(nextOpen);
       }}
     >
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto overflow-x-hidden [&>*]:min-w-0">
+        <DialogHeader className="min-w-0">
           <DialogTitle className="flex items-center gap-2">
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="w-4 h-4 shrink-0" />
             LeetCode Global Sync
           </DialogTitle>
           <DialogDescription>
@@ -158,10 +158,10 @@ export function LeetCodeSyncDialog({ open, onOpenChange }: Props) {
         </DialogHeader>
 
         {(user?.leetcode_username || formattedLastSync) && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
-            <div className="flex items-center gap-2">
-              <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
-              <span>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <UserCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <span className="truncate">
                 {user?.leetcode_username ? (
                   <>
                     Linked: <span className="font-medium text-foreground">@{user.leetcode_username}</span>
@@ -172,18 +172,22 @@ export function LeetCodeSyncDialog({ open, onOpenChange }: Props) {
               </span>
             </div>
             {formattedLastSync && (
-              <span className="text-muted-foreground">Last synced: {formattedLastSync}</span>
+              <span className="text-muted-foreground shrink-0">Last synced: {formattedLastSync}</span>
             )}
           </div>
         )}
 
-        <Tabs value={tab} onValueChange={(v) => setTab(v as "username" | "import")}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="username">Username (Public)</TabsTrigger>
-            <TabsTrigger value="import">Import CSV / JSON (100% Offline)</TabsTrigger>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "username" | "import")} className="w-full min-w-0">
+          <TabsList className="grid w-full grid-cols-2 h-auto">
+            <TabsTrigger value="username" className="text-xs sm:text-sm py-1.5 whitespace-normal text-center leading-tight">
+              Username (Public)
+            </TabsTrigger>
+            <TabsTrigger value="import" className="text-xs sm:text-sm py-1.5 whitespace-normal text-center leading-tight">
+              Import CSV / JSON (Offline)
+            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="username" className="space-y-4 pt-2">
+          <TabsContent value="username" className="space-y-4 pt-2 min-w-0">
             <form
               className="space-y-3"
               onSubmit={(e) => {
@@ -286,37 +290,41 @@ export function LeetCodeSyncDialog({ open, onOpenChange }: Props) {
             )}
           </TabsContent>
 
-          <TabsContent value="import" className="space-y-4 pt-2">
-            <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 text-xs font-medium">
-                  <Terminal className="w-3.5 h-3.5" />
-                  Export full solved history from leetcode.com (read-only)
+          <TabsContent value="import" className="space-y-4 pt-2 min-w-0">
+            <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2 min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+                <div className="flex items-center gap-1.5 text-xs font-medium min-w-0">
+                  <Terminal className="w-3.5 h-3.5 shrink-0" />
+                  <span>Export full solved history from leetcode.com (read-only)</span>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-7 px-2 text-xs gap-1"
+                  className="h-7 px-2 text-xs gap-1 shrink-0"
                   onClick={handleCopySnippet}
                 >
                   {copiedSnippet ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                   {copiedSnippet ? "Copied" : "Copy snippet"}
                 </Button>
               </div>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
                 Open <code className="bg-muted px-1 rounded">leetcode.com</code> while signed in, open DevTools Console, paste this snippet, and upload the downloaded{" "}
                 <code className="bg-muted px-1 rounded">leetcode-solved.json</code> file below.
               </p>
-              <pre className="max-h-24 overflow-auto rounded border border-border bg-background p-2 text-[11px] font-mono text-muted-foreground">
-                {LEETCODE_CONSOLE_SNIPPET}
-              </pre>
+              <div className="w-full min-w-0 overflow-hidden rounded border border-border bg-background">
+                <pre className="max-h-24 w-full overflow-auto p-2 text-[11px] font-mono text-muted-foreground">
+                  {LEETCODE_CONSOLE_SNIPPET}
+                </pre>
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="sync-import-text">Paste IDs, slugs, JSON, or upload CSV / JSON</Label>
-                <label className="inline-flex items-center gap-1 text-xs font-medium cursor-pointer text-foreground hover:underline">
+            <div className="space-y-2 min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="sync-import-text" className="text-xs sm:text-sm">
+                  Paste IDs, slugs, JSON, or upload CSV / JSON
+                </Label>
+                <label className="inline-flex items-center gap-1 text-xs font-medium cursor-pointer text-foreground hover:underline shrink-0">
                   <FileUp className="w-3.5 h-3.5" />
                   Choose file
                   <input
@@ -336,7 +344,7 @@ export function LeetCodeSyncDialog({ open, onOpenChange }: Props) {
                   setImportText(e.target.value);
                 }}
                 placeholder={`Examples:\n1, 139, 72\ntwo-sum, word-break\n{"solvedIds": [1, 139]}\nOr upload a CSV (supports optional Status / Solved column)`}
-                className="font-mono text-xs"
+                className="font-mono text-xs w-full min-w-0 resize-y"
               />
             </div>
 
