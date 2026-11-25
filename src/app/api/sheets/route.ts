@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, ensureSchemaReady } from "@/lib/db";
 import { getUserFromAccessToken, unauthorized } from "@/lib/auth-utils";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
+  await ensureSchemaReady();
   const user = await getUserFromAccessToken(req);
   if (!user) return unauthorized();
 
@@ -43,6 +44,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  await ensureSchemaReady();
   const user = await getUserFromAccessToken(req);
   if (!user) return unauthorized();
 

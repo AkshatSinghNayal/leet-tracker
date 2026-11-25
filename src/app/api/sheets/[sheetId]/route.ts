@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, ensureSchemaReady } from "@/lib/db";
 import { getUserFromAccessToken, unauthorized, notFound } from "@/lib/auth-utils";
 
 export const runtime = "nodejs";
 
 async function getOwnedSheet(req: NextRequest, sheetId: string) {
+  await ensureSchemaReady();
   const user = await getUserFromAccessToken(req);
   if (!user) return { user: null, sheet: null, error: unauthorized() };
   const sheet = await db.sheet.findFirst({ where: { id: sheetId, ownerId: user.id } });

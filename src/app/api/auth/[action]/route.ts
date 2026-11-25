@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, ensureSchemaReady } from "@/lib/db";
 import {
   hashPassword,
   verifyPassword,
@@ -15,6 +15,7 @@ export const runtime = "nodejs";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ action: string }> }) {
   const { action } = await params;
+  await ensureSchemaReady();
   if (action === "register") return handleRegister(req);
   if (action === "login") return handleLogin(req);
   if (action === "refresh") return handleRefresh();
@@ -24,6 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ act
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ action: string }> }) {
   const { action } = await params;
+  await ensureSchemaReady();
   if (action === "me") return handleMe(_req);
   return Response.json({ detail: "Not found" }, { status: 404 });
 }

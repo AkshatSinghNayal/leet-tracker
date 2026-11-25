@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, ensureSchemaReady } from "@/lib/db";
 import { getUserFromAccessToken, unauthorized, notFound } from "@/lib/auth-utils";
 
 export const runtime = "nodejs";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sheetId: string; questionId: string }> }) {
+  await ensureSchemaReady();
   const { sheetId, questionId } = await params;
   const user = await getUserFromAccessToken(req);
   if (!user) return unauthorized();
@@ -89,6 +90,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sh
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ sheetId: string; questionId: string }> }) {
+  await ensureSchemaReady();
   const { sheetId, questionId } = await params;
   const user = await getUserFromAccessToken(req);
   if (!user) return unauthorized();

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, ensureSchemaReady } from "@/lib/db";
 import { getUserFromAccessToken, unauthorized, notFound } from "@/lib/auth-utils";
 
 export const runtime = "nodejs";
@@ -44,6 +44,7 @@ function parseQuery(url: URL): QueryParams {
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ sheetId: string }> }) {
+  await ensureSchemaReady();
   const { sheetId } = await params;
   const user = await getUserFromAccessToken(req);
   if (!user) return unauthorized();
@@ -145,6 +146,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ sheetId: string }> }) {
+  await ensureSchemaReady();
   const { sheetId } = await params;
   const user = await getUserFromAccessToken(req);
   if (!user) return unauthorized();

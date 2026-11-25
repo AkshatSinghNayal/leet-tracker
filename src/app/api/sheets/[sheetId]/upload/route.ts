@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, ensureSchemaReady } from "@/lib/db";
 import { getUserFromAccessToken, unauthorized, notFound } from "@/lib/auth-utils";
 import { parseLeetcodeCsv, CsvValidationError } from "@/lib/csv";
 
@@ -9,6 +9,7 @@ const MAX_CSV_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 const DIFFICULTY_ORDER: Record<string, number> = { Easy: 0, Medium: 1, Hard: 2 };
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ sheetId: string }> }) {
+  await ensureSchemaReady();
   const { sheetId } = await params;
   const user = await getUserFromAccessToken(req);
   if (!user) return unauthorized();
