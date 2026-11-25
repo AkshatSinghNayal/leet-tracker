@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
     select: {
       id: true,
       name: true,
+      syncWithGlobal: true,
       createdAt: true,
       updatedAt: true,
       _count: { select: { questions: true } },
@@ -32,6 +33,7 @@ export async function GET(req: NextRequest) {
     sheets: sheets.map((s) => ({
       id: s.id,
       name: s.name,
+      sync_with_global: s.syncWithGlobal,
       question_count: s._count.questions,
       solved_count: solvedMap.get(s.id) ?? 0,
       created_at: s.createdAt,
@@ -60,13 +62,14 @@ export async function POST(req: NextRequest) {
 
   const sheet = await db.sheet.create({
     data: { ownerId: user.id, name },
-    select: { id: true, name: true, createdAt: true, updatedAt: true },
+    select: { id: true, name: true, syncWithGlobal: true, createdAt: true, updatedAt: true },
   });
 
   return Response.json({
     sheet: {
       id: sheet.id,
       name: sheet.name,
+      sync_with_global: sheet.syncWithGlobal,
       question_count: 0,
       solved_count: 0,
       created_at: sheet.createdAt,

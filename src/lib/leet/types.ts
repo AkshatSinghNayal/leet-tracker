@@ -4,15 +4,44 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  leetcode_username?: string | null;
+  leetcode_last_synced_at?: string | null;
 }
 
 export interface Sheet {
   id: string;
   name: string;
+  sync_with_global: boolean;
   question_count: number;
   solved_count: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface LeetCodeSyncUsernameResponse {
+  mode: "username";
+  leetcode_username: string | null;
+  leetcode_last_synced_at: string | null;
+  stats: {
+    all: number;
+    easy: number;
+    medium: number;
+    hard: number;
+  };
+  recent_ac_count: number;
+  matched_questions: number;
+  newly_added_global: number;
+  newly_marked_in_sheets: number;
+}
+
+export interface LeetCodeSyncImportResponse {
+  mode: "import";
+  leetcode_username: string | null;
+  leetcode_last_synced_at: string | null;
+  total_submitted_ids: number;
+  resolved_from_slugs: number;
+  newly_added_global: number;
+  newly_marked_in_sheets: number;
 }
 
 export interface DifficultyStats {

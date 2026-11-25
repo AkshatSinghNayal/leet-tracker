@@ -56,14 +56,23 @@ async function handleRegister(req: NextRequest) {
 
   const user = await db.user.create({
     data: { email, name, hashedPassword: hashPassword(password) },
-    select: { id: true, email: true, name: true },
+    select: { id: true, email: true, name: true, leetcodeUsername: true, leetcodeLastSyncedAt: true },
   });
 
   const accessToken = await createAccessToken(user.id);
   const refreshToken = await createRefreshToken(user.id);
   await setRefreshCookie(refreshToken);
 
-  return Response.json({ user, access_token: accessToken }, { status: 201 });
+  return Response.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      leetcode_username: user.leetcodeUsername,
+      leetcode_last_synced_at: user.leetcodeLastSyncedAt,
+    },
+    access_token: accessToken,
+  }, { status: 201 });
 }
 
 async function handleLogin(req: NextRequest) {
@@ -90,7 +99,13 @@ async function handleLogin(req: NextRequest) {
   await setRefreshCookie(refreshToken);
 
   return Response.json({
-    user: { id: user.id, email: user.email, name: user.name },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      leetcode_username: user.leetcodeUsername,
+      leetcode_last_synced_at: user.leetcodeLastSyncedAt,
+    },
     access_token: accessToken,
   });
 }
@@ -123,10 +138,24 @@ async function handleMe(req: NextRequest) {
   }
   const user = await db.user.findUnique({
     where: { id: payload.sub },
-    select: { id: true, email: true, name: true, createdAt: true },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      leetcodeUsername: true,
+      leetcodeLastSyncedAt: true,
+      createdAt: true,
+    },
   });
   if (!user) {
     return Response.json({ detail: "User not found" }, { status: 401 });
   }
-  return Response.json(user);
+  return Response.json({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    leetcode_username: user.leetcodeUsername,
+    leetcode_last_synced_at: user.leetcodeLastSyncedAt,
+    createdAt: user.createdAt,
+  });
 }

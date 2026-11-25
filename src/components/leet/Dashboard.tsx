@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, SlidersHorizontal, X } from "lucide-react";
+import { Loader2, SlidersHorizontal, X, Unlink, Link2, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Header } from "./Header";
 import { SheetTabs } from "./SheetTabs";
@@ -11,7 +12,7 @@ import { ActiveFilters } from "./ActiveFilters";
 import { StatsBar } from "./StatsBar";
 import { QuestionTable } from "./QuestionTable";
 import { EmptyState } from "./EmptyState";
-import { useSheets } from "@/hooks/useSheets";
+import { useSheets, useToggleSheetSync, useResetSheetRevision } from "@/hooks/useSheets";
 import { useDebounce } from "@/hooks/useDebounce";
 import { sheetsApi } from "@/lib/leet/api";
 import type { Filters, SortBy, SortDir, QuestionsResponse } from "@/lib/leet/types";
@@ -37,6 +38,14 @@ export function Dashboard() {
     if (activeSheetId && sheets.find((s) => s.id === activeSheetId)) return activeSheetId;
     return sheets[0].id;
   }, [sheets, sheetsLoading, activeSheetId]);
+
+  const activeSheet = useMemo(
+    () => sheets.find((s) => s.id === effectiveSheetId) ?? null,
+    [sheets, effectiveSheetId]
+  );
+
+  const toggleSyncMut = useToggleSheetSync();
+  const resetRevisionMut = useResetSheetRevision();
 
   // Debounce the search input
   const debouncedSearch = useDebounce(searchInput, 300);
@@ -126,7 +135,109 @@ export function Dashboard() {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            <StatsBar stats={data?.stats ?? null} />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground text-sm">{activeSheet?.name}</span>
+                <span>·</span>
+                {activeSheet?.sync_with_global !== false ? (
+                  <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Synced with Global LC
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    Revision Mode (Desynced)
+                  </span>
+                )}
+              </div>
+
+              {activeSheet && (
+                <div className="flex items-center gap-2">
+                  {activeSheet.sync_with_global ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 text-xs"
+                      disabled={toggleSyncMut.isPending}
+                      onClick={async () => {
+                        try {
+                          await toggleSyncMut.mutateAsync({
+                            id: activeSheet.id,
+                            syncWithGlobal: false,
+                          });
+                          toast.info(
+                            `"${activeSheet.name}" switched to Revision Mode. Sheet progress reset; global progress preserved.`
+                          );
+                        } catch (e) {
+                          toast.error((e as Error).message || "Failed to desync sheet");
+                        }
+                      }}
+                    >
+                      {toggleSyncMut.isPending ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Unlink className="w-3.5 h-3.5" />
+                      )}
+                      Desync (Revision)
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 text-xs"
+                        disabled={resetRevisionMut.isPending || toggleSyncMut.isPending}
+                        onClick={async () => {
+                          try {
+                            await resetRevisionMut.mutateAsync(activeSheet.id);
+                            toast.success(`Reset revision progress for "${activeSheet.name}".`);
+                          } catch (e) {
+                            toast.error((e as Error).message || "Failed to reset revision");
+                          }
+                        }}
+                      >
+                        {resetRevisionMut.isPending ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        )}
+                        Reset
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="h-8 gap-1.5 text-xs"
+                        disabled={toggleSyncMut.isPending || resetRevisionMut.isPending}
+                        onClick={async () => {
+                          try {
+                            await toggleSyncMut.mutateAsync({
+                              id: activeSheet.id,
+                              syncWithGlobal: true,
+                            });
+                            toast.success(`"${activeSheet.name}" re-synced with global LeetCode progress.`);
+                          } catch (e) {
+                            toast.error((e as Error).message || "Failed to sync sheet");
+                          }
+                        }}
+                      >
+                        {toggleSyncMut.isPending ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Link2 className="w-3.5 h-3.5" />
+                        )}
+                        Sync with LC
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <StatsBar
+              stats={data?.stats ?? null}
+              syncWithGlobal={activeSheet?.sync_with_global ?? true}
+            />
 
             <div className="flex flex-col lg:flex-row gap-4">
               {/* Desktop sidebar */}

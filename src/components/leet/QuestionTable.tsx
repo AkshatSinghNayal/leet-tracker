@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Loader2 } from "lucide-react";
+import { useMemo, useSyncExternalStore } from "react";
+import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Eye, EyeOff } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,8 +24,37 @@ import { cn } from "@/lib/utils";
 import type { QuestionsResponse, SortBy, SortDir } from "@/lib/leet/types";
 import { DifficultyBadge } from "./DifficultyBadge";
 import { useToggleSolved } from "@/hooks/useSheets";
-import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+
+const COLUMN_VISIBILITY_KEY = "lt_column_visibility";
+const COLUMN_VISIBILITY_EVENT = "lt-column-visibility-change";
+const DEFAULT_COLUMN_JSON = '{"level":true,"topic":true}';
+
+interface ColumnVisibility {
+  level: boolean;
+  topic: boolean;
+}
+
+function subscribeColumnVisibility(callback: () => void) {
+  window.addEventListener("storage", callback);
+  window.addEventListener(COLUMN_VISIBILITY_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(COLUMN_VISIBILITY_EVENT, callback);
+  };
+}
+
+function getColumnVisibilitySnapshot() {
+  try {
+    return localStorage.getItem(COLUMN_VISIBILITY_KEY) ?? DEFAULT_COLUMN_JSON;
+  } catch {
+    return DEFAULT_COLUMN_JSON;
+  }
+}
+
+function getColumnVisibilityServerSnapshot() {
+  return DEFAULT_COLUMN_JSON;
+}
 
 interface Props {
   sheetId: string;
@@ -43,14 +73,40 @@ export function QuestionTable({
   sheetId, data, isLoading, sortBy, sortDir, onSortChange, page, pageSize, onPageChange, onPageSizeChange,
 }: Props) {
   const toggleMut = useToggleSolved(sheetId);
-  const qc = useQueryClient();
+  const rawColumns = useSyncExternalStore(
+    subscribeColumnVisibility,
+    getColumnVisibilitySnapshot,
+    getColumnVisibilityServerSnapshot
+  );
+
+  const columns: ColumnVisibility = useMemo(() => {
+    try {
+      const parsed = JSON.parse(rawColumns) as Partial<ColumnVisibility>;
+      return {
+        level: typeof parsed.level === "boolean" ? parsed.level : true,
+        topic: typeof parsed.topic === "boolean" ? parsed.topic : true,
+      };
+    } catch {
+      return { level: true, topic: true };
+    }
+  }, [rawColumns]);
+
+  const toggleColumn = (col: keyof ColumnVisibility) => {
+    const next: ColumnVisibility = { ...columns, [col]: !columns[col] };
+    try {
+      localStorage.setItem(COLUMN_VISIBILITY_KEY, JSON.stringify(next));
+      window.dispatchEvent(new Event(COLUMN_VISIBILITY_EVENT));
+    } catch {
+      // Ignore storage errors
+    }
+  };
 
   const headers: Array<{ key: SortBy | "status" | "actions"; label: string; sortable: boolean; className?: string }> = [
     { key: "status", label: "✓", sortable: false, className: "w-10" },
     { key: "id", label: "#", sortable: true, className: "w-16 tabular-nums" },
     { key: "title", label: "Title", sortable: true },
-    { key: "difficulty", label: "Level", sortable: true, className: "w-24" },
-    { key: "primary_topic", label: "Topic", sortable: true, className: "w-44" },
+    ...(columns.level ? [{ key: "difficulty" as const, label: "Level", sortable: true, className: "w-24" }] : []),
+    ...(columns.topic ? [{ key: "primary_topic" as const, label: "Topic", sortable: true, className: "w-44" }] : []),
     { key: "actions", label: "", sortable: false, className: "w-10" },
   ];
 
@@ -66,14 +122,11 @@ export function QuestionTable({
     const newSolved = !currentSolved;
     try {
       const result = await toggleMut.mutateAsync({ questionId, solved: newSolved });
-      // Invalidate all queries — global solved sync means other sheets may have changed too
-      qc.invalidateQueries({ queryKey: ["questions"] });
-      qc.invalidateQueries({ queryKey: ["sheets"] });
       if (result.propagated) {
         toast.info(
           newSolved
-            ? `Marked solved across all sheets (LeetCode #${leetcodeId}).`
-            : `Marked unsolved across all sheets (LeetCode #${leetcodeId}).`,
+            ? `Marked solved across all synced sheets (LeetCode #${leetcodeId}).`
+            : `Marked unsolved across all synced sheets (LeetCode #${leetcodeId}).`,
           { duration: 2500 }
         );
       }
@@ -84,6 +137,37 @@ export function QuestionTable({
 
   return (
     <div className="rounded-md border border-border overflow-hidden bg-card">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/20">
+        <span className="text-xs text-muted-foreground">
+          {data ? `${data.total.toLocaleString()} question${data.total === 1 ? "" : "s"}` : "Questions"}
+        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground mr-0.5 hidden sm:inline">Columns:</span>
+          <Button
+            type="button"
+            variant={columns.level ? "secondary" : "outline"}
+            size="sm"
+            className="h-7 px-2 text-xs gap-1"
+            onClick={() => toggleColumn("level")}
+            aria-pressed={columns.level}
+          >
+            {columns.level ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+            Level
+          </Button>
+          <Button
+            type="button"
+            variant={columns.topic ? "secondary" : "outline"}
+            size="sm"
+            className="h-7 px-2 text-xs gap-1"
+            onClick={() => toggleColumn("topic")}
+            aria-pressed={columns.topic}
+          >
+            {columns.topic ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+            Topic
+          </Button>
+        </div>
+      </div>
+
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
@@ -113,12 +197,12 @@ export function QuestionTable({
             {isLoading ? (
               Array.from({ length: 10 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={6}><Skeleton className="h-5 w-full" /></TableCell>
+                  <TableCell colSpan={headers.length}><Skeleton className="h-5 w-full" /></TableCell>
                 </TableRow>
               ))
             ) : !data || data.questions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-12">
+                <TableCell colSpan={headers.length} className="text-center text-sm text-muted-foreground py-12">
                   No questions match your filters.
                 </TableCell>
               </TableRow>
@@ -154,16 +238,20 @@ export function QuestionTable({
                       <ExternalLink className="w-3 h-3 opacity-0 group-hover/link:opacity-100 text-muted-foreground" />
                     </a>
                   </TableCell>
-                  <TableCell><DifficultyBadge difficulty={q.difficulty} /></TableCell>
-                  <TableCell>
-                    {q.primary_topic && q.primary_topic !== "Uncategorized" ? (
-                      <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-xs text-muted-foreground">
-                        {q.primary_topic}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground/50">—</span>
-                    )}
-                  </TableCell>
+                  {columns.level && (
+                    <TableCell><DifficultyBadge difficulty={q.difficulty} /></TableCell>
+                  )}
+                  {columns.topic && (
+                    <TableCell>
+                      {q.primary_topic && q.primary_topic !== "Uncategorized" ? (
+                        <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-xs text-muted-foreground">
+                          {q.primary_topic}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/50">—</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell />
                 </TableRow>
               ))

@@ -50,20 +50,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
     return Response.json({ detail: "No valid rows in CSV" }, { status: 400 });
   }
 
-  // Use the GLOBAL SolvedQuestion table to determine solved state.
-  // This means: if a user has solved leetcode_id=139 in ANY sheet, uploading
-  // a new CSV containing leetcode_id=139 will mark it as solved in this sheet too.
-  const globallySolved = await db.solvedQuestion.findMany({
-    where: { ownerId: user.id, leetcodeId: { in: parsed.questions.map((q) => q.leetcodeId) } },
-    select: { leetcodeId: true },
-  });
-  const solvedSet = new Set(globallySolved.map((q) => q.leetcodeId));
+  // Deduplicate questions by leetcodeId (keep first occurrence)
+  const dedupedMap = new Map<number, (typeof parsed.questions)[number]>();
+  for (const q of parsed.questions) {
+    if (!dedupedMap.has(q.leetcodeId)) dedupedMap.set(q.leetcodeId, q);
+  }
+  const uniqueQuestions = Array.from(dedupedMap.values());
 
+  // Use the GLOBAL SolvedQuestion table to determine solved state when sheet sync is enabled.
+  const solvedSet = new Set<number>();
+  if (sheet.syncWithGlobal) {
+    const globallySolved = await db.solvedQuestion.findMany({
+      where: { ownerId: user.id, leetcodeId: { in: uniqueQuestions.map((q) => q.leetcodeId) } },
+      select: { leetcodeId: true },
+    });
+    for (const q of globallySolved) solvedSet.add(q.leetcodeId);
+  }
+
+  const now = new Date();
   // Atomic-ish replace: delete all, then insert all (transaction)
   await db.$transaction([
     db.question.deleteMany({ where: { sheetId } }),
     db.question.createMany({
-      data: parsed.questions.map((q) => ({
+      data: uniqueQuestions.map((q) => ({
         sheetId,
         ownerId: user.id,
         leetcodeId: q.leetcodeId,
@@ -73,23 +82,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
         difficultyOrder: DIFFICULTY_ORDER[q.difficulty],
         primaryTopic: q.primaryTopic,
         solved: solvedSet.has(q.leetcodeId),
-        solvedAt: solvedSet.has(q.leetcodeId) ? new Date() : null,
+        solvedAt: solvedSet.has(q.leetcodeId) ? now : null,
       })),
     }),
-    db.sheet.update({ where: { id: sheetId }, data: { updatedAt: new Date() } }),
+    db.sheet.update({ where: { id: sheetId }, data: { updatedAt: now } }),
   ]);
 
-  const preserved = parsed.questions.filter((q) => solvedSet.has(q.leetcodeId)).length;
+  const preserved = uniqueQuestions.filter((q) => solvedSet.has(q.leetcodeId)).length;
 
   const updatedSheet = await db.sheet.findUnique({
     where: { id: sheetId },
-    select: { id: true, name: true, createdAt: true, updatedAt: true },
+    select: { id: true, name: true, syncWithGlobal: true, createdAt: true, updatedAt: true },
   });
 
   return Response.json({
-    sheet: updatedSheet,
-    imported: parsed.questions.length,
-    skipped: parsed.skipped,
+    sheet: updatedSheet
+      ? {
+          id: updatedSheet.id,
+          name: updatedSheet.name,
+          sync_with_global: updatedSheet.syncWithGlobal,
+          created_at: updatedSheet.createdAt,
+          updated_at: updatedSheet.updatedAt,
+        }
+      : null,
+    imported: uniqueQuestions.length,
+    skipped: parsed.skipped + (parsed.questions.length - uniqueQuestions.length),
     preserved_solved: preserved,
   });
 }

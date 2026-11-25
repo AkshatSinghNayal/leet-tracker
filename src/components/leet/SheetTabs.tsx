@@ -26,7 +26,7 @@ import {
 import { toast } from "sonner";
 import { useSheets, useCreateSheet, useRenameSheet, useDeleteSheet, useUploadCsv } from "@/hooks/useSheets";
 import type { Sheet } from "@/lib/leet/types";
-import { parseLeetcodeCsvClient } from "@/lib/leet/csv-client";
+import { parseLeetcodeCsvClient, type ParsedPreview } from "@/lib/leet/csv-client";
 
 interface Props {
   activeSheetId: string | null;
@@ -105,6 +105,13 @@ function SheetTab({ sheet, active, onSelect }: { sheet: Sheet; active: boolean; 
         </>
       ) : (
         <>
+          {!sheet.sync_with_global && (
+            <span
+              className="w-2 h-2 rounded-full bg-amber-500 shrink-0"
+              title="Revision Mode (desynced from global progress)"
+              aria-label="Revision mode"
+            />
+          )}
           <span className="font-medium">{sheet.name}</span>
           <span className="text-xs text-muted-foreground tabular-nums">
             {sheet.solved_count}/{sheet.question_count}
@@ -167,7 +174,7 @@ function UploadSheetButton({ open, onOpenChange }: { open: boolean; onOpenChange
   const [alias, setAlias] = useState("");
   const [mode, setMode] = useState<"create" | "replace">("create");
   const [targetSheetId, setTargetSheetId] = useState<string>("");
-  const [preview, setPreview] = useState<{ valid: number; skipped: number; sample: { leetcodeId: number; title: string; difficulty: string; primaryTopic: string }[]; hasPrimaryTopic: boolean } | null>(null);
+  const [preview, setPreview] = useState<ParsedPreview | null>(null);
   const uploadMut = useUploadCsv();
   const { data: sheets = [] } = useSheets();
   const createMut = useCreateSheet();

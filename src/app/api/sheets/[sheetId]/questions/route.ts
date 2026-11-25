@@ -55,7 +55,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ shee
 
   const where: Record<string, unknown> = { sheetId, ownerId: user.id };
   if (q.search) {
-    where.title = { contains: q.search };
+    where.title = { contains: q.search, mode: "insensitive" };
   }
   if (q.difficulty && q.difficulty.length > 0) {
     where.difficulty = { in: q.difficulty };
@@ -183,6 +183,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
   if (existing) return Response.json({ detail: "Question already exists in this sheet" }, { status: 409 });
 
   const primaryTopic = (body.primary_topic ?? "").trim() || "Uncategorized";
+  const globallySolved = sheet.syncWithGlobal
+    ? await db.solvedQuestion.findUnique({
+        where: { ownerId_leetcodeId: { ownerId: user.id, leetcodeId } },
+        select: { solvedAt: true },
+      })
+    : null;
 
   const question = await db.question.create({
     data: {
@@ -194,6 +200,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ she
       difficulty,
       difficultyOrder: DIFFICULTY_ORDER[difficulty],
       primaryTopic,
+      solved: Boolean(globallySolved),
+      solvedAt: globallySolved?.solvedAt ?? null,
     },
   });
 

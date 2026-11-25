@@ -1,7 +1,15 @@
 // API client — axios-like wrapper using fetch, with refresh-on-401 interceptor (single-flight)
 // All API paths are RELATIVE to satisfy the gateway constraint.
 
-import type { User, Sheet, SheetStats, Question, QuestionsResponse } from "./types";
+import type {
+  User,
+  Sheet,
+  SheetStats,
+  Question,
+  QuestionsResponse,
+  LeetCodeSyncUsernameResponse,
+  LeetCodeSyncImportResponse,
+} from "./types";
 
 let accessToken: string | null = null;
 let refreshPromise: Promise<string> | null = null;
@@ -120,6 +128,16 @@ export const sheetsApi = {
   get: (id: string) => apiJson<{ sheet: Sheet; stats: SheetStats }>(`/api/sheets/${id}`),
   rename: (id: string, name: string) =>
     apiJson<{ sheet: Sheet }>(`/api/sheets/${id}`, { method: "PATCH", body: { name } }),
+  setSyncWithGlobal: (id: string, syncWithGlobal: boolean) =>
+    apiJson<{ sheet: Sheet }>(`/api/sheets/${id}`, {
+      method: "PATCH",
+      body: { sync_with_global: syncWithGlobal },
+    }),
+  resetRevision: (id: string) =>
+    apiJson<{ sheet: Sheet }>(`/api/sheets/${id}`, {
+      method: "PATCH",
+      body: { reset_revision: true },
+    }),
   remove: (id: string) => apiJson<{ ok: true }>(`/api/sheets/${id}`, { method: "DELETE" }),
   questions: (sheetId: string, query: Record<string, string>) =>
     apiJson<QuestionsResponse>(`/api/sheets/${sheetId}/questions?${new URLSearchParams(query)}`),
@@ -132,11 +150,39 @@ export const sheetsApi = {
     );
   },
   toggleSolved: (sheetId: string, questionId: string, solved: boolean) =>
-    apiJson<{ question: Question }>(`/api/sheets/${sheetId}/questions/${questionId}`, {
-      method: "PATCH",
-      body: { solved },
+    apiJson<{ question: Question; propagated: boolean; leetcode_id: number }>(
+      `/api/sheets/${sheetId}/questions/${questionId}`,
+      {
+        method: "PATCH",
+        body: { solved },
+      },
+    ),
+};
+
+export const leetcodeApi = {
+  syncByUsername: (username: string) =>
+    apiJson<LeetCodeSyncUsernameResponse>("/api/leetcode/sync", {
+      method: "POST",
+      body: { mode: "username", username },
+    }),
+  syncImport: (payload: { solvedIds: number[]; solvedSlugs: string[]; username?: string }) =>
+    apiJson<LeetCodeSyncImportResponse>("/api/leetcode/sync", {
+      method: "POST",
+      body: { mode: "import", ...payload },
+    }),
+  disconnect: () =>
+    apiJson<{ ok: true; leetcode_username: null }>("/api/leetcode/sync", {
+      method: "DELETE",
     }),
 };
 
 // Re-export types so consumers can import from a single module
-export type { User, Sheet, SheetStats, Question, QuestionsResponse } from "./types";
+export type {
+  User,
+  Sheet,
+  SheetStats,
+  Question,
+  QuestionsResponse,
+  LeetCodeSyncUsernameResponse,
+  LeetCodeSyncImportResponse,
+} from "./types";

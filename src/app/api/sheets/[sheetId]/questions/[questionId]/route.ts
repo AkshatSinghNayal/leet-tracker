@@ -22,29 +22,47 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sh
   const target = await db.question.findFirst({ where: { id: questionId, sheetId, ownerId: user.id } });
   if (!target) return notFound("Question not found");
 
+  let propagated = false;
   if (typeof body.solved === "boolean") {
     const now = new Date();
-    if (body.solved) {
-      // 1. Upsert into global SolvedQuestion
-      await db.solvedQuestion.upsert({
-        where: { ownerId_leetcodeId: { ownerId: user.id, leetcodeId: target.leetcodeId } },
-        update: { solvedAt: now },
-        create: { ownerId: user.id, leetcodeId: target.leetcodeId, solvedAt: now },
-      });
-      // 2. Propagate to ALL Question rows for this user with the same leetcodeId
-      await db.question.updateMany({
-        where: { ownerId: user.id, leetcodeId: target.leetcodeId },
-        data: { solved: true, solvedAt: now },
-      });
+    if (sheet.syncWithGlobal) {
+      propagated = true;
+      if (body.solved) {
+        // 1. Upsert into global SolvedQuestion
+        await db.solvedQuestion.upsert({
+          where: { ownerId_leetcodeId: { ownerId: user.id, leetcodeId: target.leetcodeId } },
+          update: { solvedAt: now },
+          create: { ownerId: user.id, leetcodeId: target.leetcodeId, solvedAt: now },
+        });
+        // 2. Propagate ONLY to Question rows in synced sheets for this user
+        await db.question.updateMany({
+          where: {
+            ownerId: user.id,
+            leetcodeId: target.leetcodeId,
+            sheet: { syncWithGlobal: true },
+          },
+          data: { solved: true, solvedAt: now },
+        });
+      } else {
+        // 1. Delete from global SolvedQuestion
+        await db.solvedQuestion.deleteMany({
+          where: { ownerId: user.id, leetcodeId: target.leetcodeId },
+        });
+        // 2. Propagate ONLY to Question rows in synced sheets
+        await db.question.updateMany({
+          where: {
+            ownerId: user.id,
+            leetcodeId: target.leetcodeId,
+            sheet: { syncWithGlobal: true },
+          },
+          data: { solved: false, solvedAt: null },
+        });
+      }
     } else {
-      // 1. Delete from global SolvedQuestion
-      await db.solvedQuestion.deleteMany({
-        where: { ownerId: user.id, leetcodeId: target.leetcodeId },
-      });
-      // 2. Propagate to ALL Question rows
-      await db.question.updateMany({
-        where: { ownerId: user.id, leetcodeId: target.leetcodeId },
-        data: { solved: false, solvedAt: null },
+      // Sheet is desynced (Revision Mode): update ONLY this sheet's Question row
+      await db.question.update({
+        where: { id: questionId },
+        data: { solved: body.solved, solvedAt: body.solved ? now : null },
       });
     }
   }
@@ -64,8 +82,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sh
       solved: question.solved,
       solved_at: question.solvedAt,
     },
-    // Hint to the client that other sheets may have been updated
-    propagated: true,
+    // Hint to the client whether other synced sheets were updated
+    propagated,
     leetcode_id: question.leetcodeId,
   });
 }

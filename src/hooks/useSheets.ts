@@ -26,6 +26,29 @@ export function useRenameSheet() {
   });
 }
 
+export function useToggleSheetSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, syncWithGlobal }: { id: string; syncWithGlobal: boolean }) =>
+      sheetsApi.setSyncWithGlobal(id, syncWithGlobal).then((r) => r.sheet),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sheets"] });
+      qc.invalidateQueries({ queryKey: ["questions"] });
+    },
+  });
+}
+
+export function useResetSheetRevision() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => sheetsApi.resetRevision(id).then((r) => r.sheet),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sheets"] });
+      qc.invalidateQueries({ queryKey: ["questions"] });
+    },
+  });
+}
+
 export function useDeleteSheet() {
   const qc = useQueryClient();
   return useMutation({
